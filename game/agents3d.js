@@ -11,6 +11,7 @@ import { carryGeometry, flamerGeometry, FLAMER_MUZZLE, MA5_GUNMETAL } from './ri
 import { characterParts } from './characters.js';
 import { buildCarrier, CarrierAnimator, SACK_BLOAT_M } from './carrier-model.js';
 import { RagdollSystem } from '../engine/physics/ragdoll.js';
+import { floorLiftForBounds } from './ragdoll-clearance.js';
 import { TASK } from '../sim/hive.js';
 import { combatAttackArmPose, combatChargeArmPose } from '../sim/charge-pose.js';
 
@@ -502,6 +503,7 @@ export class Agents3D {
     this._mOut = new THREE.Matrix4();
     this._downAt = new Map(); // id -> ms when first seen downed (death blend)
     this._playerShots = []; // {ax,ay,az,bx,by,bz,ttl}
+    this._muzzleById = new Map(); // muzzle of each rifle as actually carried this frame
     // weapon lights declared this frame; the host drains them into its light
     // pool (records recycle — no per-frame garbage)
     this.rifleLights = [];
@@ -551,7 +553,7 @@ export class Agents3D {
     if (!agent) return null;
     const rag = this.ragdolls?.get(agent.id);
     if (rag) return {
-      x: rag.rootPos[0], y: rag.rootPos[1], z: rag.rootPos[2],
+      x: rag.rootPos[0], y: rag.rootPos[1] + (rag.visualLift ?? 0), z: rag.rootPos[2],
       deck: rag.deck, node: agent.pnode ?? agent.node, heading: agent.heading,
       prone: true,
     };
@@ -1102,6 +1104,7 @@ export class Agents3D {
     // pooled and zeroed rather than rebuilt: this runs every frame
     const counts = (this._counts ??= { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, corpse: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 });
     for (const key in counts) counts[key] = 0;
+    this._muzzleById.clear();
     let clip = 0, animT = 0, curId = 0, curPanic = false, curBob = 0, curAim = 0;
     const stamp = (set, i, armsHighCharge = false) => this._stampAnimated(
       set, i, clip, animT, curId, null, 0, curPanic, 0, armsHighCharge,
@@ -1324,8 +1327,15 @@ export class Agents3D {
         this._e.set(wob * 0.6, heading + wob, Math.PI / 2);
         this._q.setFromEuler(this._e);
         this._m.compose(this._p.set(wx, elev + 0.16 + arch, wz), this._q, this._s.set(1, 1, 1));
-        if (flags & FLAG.ARMED_HOST) this._stampSprawl(this.combatOdstSet, counts.combatOdst++, id);
-        else this._stampSprawl(this.combatCivSet, counts.combatCiv++, id);
+        if (flags & FLAG.ARMED_HOST) {
+          const slot = counts.combatOdst++;
+          this._stampSprawl(this.combatOdstSet, slot, id);
+          this._floorCorrectStamped(this.combatOdstSet, slot, deck);
+        } else {
+          const slot = counts.combatCiv++;
+          this._stampSprawl(this.combatCivSet, slot, id);
+          this._floorCorrectStamped(this.combatCivSet, slot, deck);
+        }
         continue;
       } else if (this._thrashInfo?.has(id)) this._thrashInfo.delete(id);
       const downed = flags & FLAG.DOWNED;
@@ -1368,7 +1378,7 @@ export class Agents3D {
         // 0.85 s instead of teleporting to it on frame one. Clearing _ragSeen
         // lets it flop again if it re-dies.
         const rag = this.ragdolls?.get(id);
-        const rest = rag ? [rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]] : this._ragRest.get(id);
+        const rest = rag ? [rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]] : this._ragRest.get(id);
         // also capture the settled ORIENTATION so the rise slerps out of the
         // exact pose the body was lying in (no face-up→prone flip on frame one)
         const fromQuat = rag ? [rag.rootQuat[0], rag.rootQuat[1], rag.rootQuat[2], rag.rootQuat[3]] : null;
@@ -1453,7 +1463,10 @@ export class Agents3D {
           this._carryAt(bx, gy, bz, heading, carry.rifle, curBob, lean);
           // the flamethrower rides the SAME solve — only the mesh differs
           if (flags & FLAG.FLAMER) this.flamer.setMatrixAt(counts.flamer++, this._m);
-          else this.rifle.setMatrixAt(counts.rifle++, this._m);
+          else {
+            this.rifle.setMatrixAt(counts.rifle++, this._m);
+            this._rememberRifleMuzzle(id);
+          }
           // bx/bz, not wx/wz: the aim sway rocks the body over its planted
           // boots, and the jet has to leave the nozzle where the nozzle IS
           if (flags & FLAG.FLAMING) this._noteFlameJet(buf.nodeId[i], bx, gy, bz, heading,
@@ -1489,7 +1502,10 @@ export class Agents3D {
           const carry = this._holdFor(set, curAim);
           this._carryAt(bx, gy, bz, heading, carry.rifle, curBob, lean);
           if (flags & FLAG.FLAMER) this.flamer.setMatrixAt(counts.flamer++, this._m);
-          else this.rifle.setMatrixAt(counts.rifle++, this._m);
+          else {
+            this.rifle.setMatrixAt(counts.rifle++, this._m);
+            this._rememberRifleMuzzle(id);
+          }
           if (flags & FLAG.FLAMING) this._noteFlameJet(buf.nodeId[i], bx, gy, bz, heading,
             carry.rifle, this._aimOf(carry.rifle, curBob, lean), deck, id);
           if (this._needsLamp(buf.nodeId[i])) {
@@ -1715,7 +1731,8 @@ export class Agents3D {
         if (!sr || !tr) continue;
         const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
         let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
-        const ey = elevOf(sr.deck) + 1.3;
+        const muzzle = this._muzzleById.get(sh.id);
+        const ey = muzzle?.y ?? elevOf(sr.deck) + 1.3;
         let ty = elevOf(tr.deck) + 0.7 + (tr.hoverY || 0);
         const range = Math.hypot(tx - sx, tz - sz);
         // PER-SHOT SPREAD (user: every tracer from every marine converged on
@@ -1727,17 +1744,21 @@ export class Agents3D {
         const j1 = shotJitter(sh.id, sim.tickCount, 1) * sp;
         const j2 = shotJitter(sh.id, sim.tickCount, 2) * sp * 0.6;
         tx += px * j1; tz += pz * j1; ty += j2;
-        pos.setXYZ(seg * 2, sx, ey, sz);
+        const dx = tx - sx, dz = tz - sz, dl = Math.hypot(dx, dz) || 1;
+        const fx2 = muzzle?.x ?? sx + dx / dl * 1.0;
+        const fz2 = muzzle?.z ?? sz + dz / dl * 1.0;
+        pos.setXYZ(seg * 2, fx2, ey, fz2);
         pos.setXYZ(seg * 2 + 1, tx, ty, tz);
         seg++;
         if (counts.flash < CAP) {
-          const dx = tx - sx, dz = tz - sz, dl = Math.hypot(dx, dz) || 1;
           const fs = 0.8 + ((sh.id + sim.tickCount) % 2) * 0.6;
-          const fx2 = sx + dx / dl * 0.6, fz2 = sz + dz / dl * 0.6;
-          this._m.compose(this._p.set(fx2, ey, fz2),
+          const flashX = muzzle ? fx2 + muzzle.dx * 0.18 : fx2 + dx / dl * 0.18;
+          const flashY = muzzle ? ey + muzzle.dy * 0.18 : ey;
+          const flashZ = muzzle ? fz2 + muzzle.dz * 0.18 : fz2 + dz / dl * 0.18;
+          this._m.compose(this._p.set(flashX, flashY, flashZ),
             this._q.identity(), this._s.set(fs, fs, fs));
           this.flash.setMatrixAt(counts.flash++, this._m);
-          if (this.flashPoints.length < 3) this.flashPoints.push({ x: fx2, y: ey, z: fz2 });
+          if (this.flashPoints.length < 3) this.flashPoints.push({ x: flashX, y: flashY, z: flashZ });
         }
       }
     }
@@ -1877,6 +1898,19 @@ export class Agents3D {
     this._m.compose(
       this._p.set(x + fx * ox - fz * cfg.right, floorY + oy, z + fz * ox + fx * cfg.right),
       this._q, this._s.set(1, 1, 1));
+  }
+
+  _rememberRifleMuzzle(id) {
+    // carryGeometry rotates the MA5's native +Z barrel onto local +X.
+    // Read the same matrix submitted for the rifle, so the flash and tracer
+    // follow its sighted pose, lean and breathing bob exactly.
+    const e = this._m.elements;
+    this._muzzleById.set(id, {
+      x: e[12] + e[0] * RIFLE_TIP + e[4] * 0.015,
+      y: e[13] + e[1] * RIFLE_TIP + e[5] * 0.015,
+      z: e[14] + e[2] * RIFLE_TIP + e[6] * 0.015,
+      dx: e[0], dy: e[1], dz: e[2],
+    });
   }
 
   // The torch points WHERE HE IS LOOKING. Riding _rifleAt put the cone on the
@@ -2028,10 +2062,6 @@ export class Agents3D {
       return false;
     }
 
-    // record where the body currently rests, so any later handoff to the legacy
-    // render (burn, cap-eviction, revive) anchors there instead of the sim node
-    this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]]);
-
     // HALO-3 THRASH (user): while the pod works inside, beat the body with
     // rising-intensity impulses — every ~quarter second, harder as the rise
     // nears, limbs whipping (kick >> speed so it convulses in place rather
@@ -2067,6 +2097,10 @@ export class Agents3D {
       if (flags & FLAG.ARMED_HOST) { set = this.combatOdstSet; ci = counts.combatOdst++; }
       else { set = this.combatCivSet; ci = counts.combatCiv++; }
     }
+    rag.visualLift = thrashing ? this._ragdollFloorLift(set, rag) : 0;
+    // Use the displayed height for the rise/camera handoff too. The physics
+    // capsule can clear the floor while a long rendered limb still penetrates.
+    this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]]);
     this._stampRagdoll(set, ci, rag);
 
     // the armed dead keep a rifle on the deck beside them, so the "take mags off
@@ -2153,10 +2187,51 @@ export class Agents3D {
   // meshes — the same pivot-anchored composition as _stampAnimated, but the
   // limb rotation is a full physics quaternion and the base is the tumbling
   // root instead of the upright pose.
+  _ragdollFloorLift(set, rag) {
+    this._q.set(...rag.rootQuat);
+    this._m.compose(this._p.set(...rag.rootPos), this._q, this._s.set(1, 1, 1));
+    const ground = (x, z) => this.world.groundHeightAt(rag.deck, x, z);
+    let lift = 0;
+    for (const mesh of set) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const pivot = mesh.userData.pivot;
+      const lq = pivot ? rag.limbs[mesh.userData.part] : null;
+      let matrix = this._m;
+      if (lq) {
+        this._q2.set(...lq);
+        this._mRot.makeRotationFromQuaternion(this._q2);
+        this._mPart.makeTranslation(...pivot)
+          .multiply(this._mRot)
+          .multiply(this._mOut.makeTranslation(-pivot[0], -pivot[1], -pivot[2]));
+        matrix = this._mOut.multiplyMatrices(this._m, this._mPart);
+      }
+      lift = Math.max(lift, floorLiftForBounds(mesh.geometry.boundingBox,
+        matrix.elements, ground));
+    }
+    return lift;
+  }
+
+  _floorCorrectStamped(set, slot, deck) {
+    const ground = (x, z) => this.world.groundHeightAt(deck, x, z);
+    let lift = 0;
+    for (const mesh of set) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      mesh.getMatrixAt(slot, this._mOut);
+      lift = Math.max(lift, floorLiftForBounds(mesh.geometry.boundingBox,
+        this._mOut.elements, ground));
+    }
+    if (lift <= 0) return;
+    for (const mesh of set) {
+      mesh.getMatrixAt(slot, this._mOut);
+      this._mOut.elements[13] += lift;
+      mesh.setMatrixAt(slot, this._mOut);
+    }
+  }
+
   _stampRagdoll(set, i, rag) {
     if (this._curD2 < CAST_NEAR2) this._castNear.add(set);
     this._q.set(rag.rootQuat[0], rag.rootQuat[1], rag.rootQuat[2], rag.rootQuat[3]);
-    this._m.compose(this._p.set(rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]),
+    this._m.compose(this._p.set(rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]),
       this._q, this._s.set(1, 1, 1));
     for (const mesh of set) {
       const pivot = mesh.userData.pivot;

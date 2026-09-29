@@ -82646,6 +82646,24 @@ var init_ragdoll = __esm({
   }
 });
 
+// game/ragdoll-clearance.js
+function floorLiftForBounds(bounds, matrix, groundHeightAt, clearance = 0.012) {
+  let lift = 0;
+  const { min: min3, max: max3 } = bounds;
+  for (let xi = 0; xi < 2; xi++) for (let yi = 0; yi < 2; yi++) for (let zi = 0; zi < 2; zi++) {
+    const x2 = xi ? max3.x : min3.x, y2 = yi ? max3.y : min3.y, z2 = zi ? max3.z : min3.z;
+    const wx = matrix[0] * x2 + matrix[4] * y2 + matrix[8] * z2 + matrix[12];
+    const wy = matrix[1] * x2 + matrix[5] * y2 + matrix[9] * z2 + matrix[13];
+    const wz = matrix[2] * x2 + matrix[6] * y2 + matrix[10] * z2 + matrix[14];
+    lift = Math.max(lift, groundHeightAt(wx, wz) + clearance - wy);
+  }
+  return lift;
+}
+var init_ragdoll_clearance = __esm({
+  "game/ragdoll-clearance.js"() {
+  }
+});
+
 // game/agents3d.js
 function shotJitter(id, tick, salt) {
   let h2 = id * 374761393 + tick * 668265263 + salt * 2246822519 | 0;
@@ -82754,6 +82772,7 @@ var init_agents3d = __esm({
     init_characters();
     init_carrier_model();
     init_ragdoll();
+    init_ragdoll_clearance();
     init_hive();
     init_charge_pose();
     CAP = 512;
@@ -82970,6 +82989,7 @@ var init_agents3d = __esm({
         this._mOut = new Matrix4();
         this._downAt = /* @__PURE__ */ new Map();
         this._playerShots = [];
+        this._muzzleById = /* @__PURE__ */ new Map();
         this.rifleLights = [];
         this.rifleLightN = 0;
         this._q2 = new Quaternion();
@@ -83006,7 +83026,7 @@ var init_agents3d = __esm({
         const rag = this.ragdolls?.get(agent.id);
         if (rag) return {
           x: rag.rootPos[0],
-          y: rag.rootPos[1],
+          y: rag.rootPos[1] + (rag.visualLift ?? 0),
           z: rag.rootPos[2],
           deck: rag.deck,
           node: agent.pnode ?? agent.node,
@@ -83500,6 +83520,7 @@ var init_agents3d = __esm({
         const k2 = Math.min(1, dt * 14);
         const counts = this._counts ??= { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, corpse: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
         for (const key in counts) counts[key] = 0;
+        this._muzzleById.clear();
         let clip = 0, animT = 0, curId = 0, curPanic = false, curBob = 0, curAim = 0;
         const stamp = (set, i2, armsHighCharge = false) => this._stampAnimated(
           set,
@@ -83672,8 +83693,15 @@ var init_agents3d = __esm({
             this._e.set(wob * 0.6, heading + wob, Math.PI / 2);
             this._q.setFromEuler(this._e);
             this._m.compose(this._p.set(wx, elev + 0.16 + arch, wz), this._q, this._s.set(1, 1, 1));
-            if (flags & FLAG.ARMED_HOST) this._stampSprawl(this.combatOdstSet, counts.combatOdst++, id);
-            else this._stampSprawl(this.combatCivSet, counts.combatCiv++, id);
+            if (flags & FLAG.ARMED_HOST) {
+              const slot = counts.combatOdst++;
+              this._stampSprawl(this.combatOdstSet, slot, id);
+              this._floorCorrectStamped(this.combatOdstSet, slot, deck);
+            } else {
+              const slot = counts.combatCiv++;
+              this._stampSprawl(this.combatCivSet, slot, id);
+              this._floorCorrectStamped(this.combatCivSet, slot, deck);
+            }
             continue;
           } else if (this._thrashInfo?.has(id)) this._thrashInfo.delete(id);
           const downed = flags & FLAG.DOWNED;
@@ -83700,7 +83728,7 @@ var init_agents3d = __esm({
           if (this._downAt.has(id) || this.ragdolls?.has(id)) {
             this._downAt.delete(id);
             const rag = this.ragdolls?.get(id);
-            const rest = rag ? [rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]] : this._ragRest.get(id);
+            const rest = rag ? [rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]] : this._ragRest.get(id);
             const fromQuat = rag ? [rag.rootQuat[0], rag.rootQuat[1], rag.rootQuat[2], rag.rootQuat[3]] : null;
             if (rag) this.ragdolls.remove(id);
             this._ragSeen.delete(id);
@@ -83762,7 +83790,10 @@ var init_agents3d = __esm({
               const carry = this._holdFor(set, curAim);
               this._carryAt(bx, gy, bz, heading, carry.rifle, curBob, lean);
               if (flags & FLAG.FLAMER) this.flamer.setMatrixAt(counts.flamer++, this._m);
-              else this.rifle.setMatrixAt(counts.rifle++, this._m);
+              else {
+                this.rifle.setMatrixAt(counts.rifle++, this._m);
+                this._rememberRifleMuzzle(id);
+              }
               if (flags & FLAG.FLAMING) this._noteFlameJet(
                 buf.nodeId[i2],
                 bx,
@@ -83810,7 +83841,10 @@ var init_agents3d = __esm({
               const carry = this._holdFor(set, curAim);
               this._carryAt(bx, gy, bz, heading, carry.rifle, curBob, lean);
               if (flags & FLAG.FLAMER) this.flamer.setMatrixAt(counts.flamer++, this._m);
-              else this.rifle.setMatrixAt(counts.rifle++, this._m);
+              else {
+                this.rifle.setMatrixAt(counts.rifle++, this._m);
+                this._rememberRifleMuzzle(id);
+              }
               if (flags & FLAG.FLAMING) this._noteFlameJet(
                 buf.nodeId[i2],
                 bx,
@@ -84020,7 +84054,8 @@ var init_agents3d = __esm({
             if (!sr || !tr) continue;
             const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
             let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
-            const ey = elevOf(sr.deck) + 1.3;
+            const muzzle = this._muzzleById.get(sh.id);
+            const ey = muzzle?.y ?? elevOf(sr.deck) + 1.3;
             let ty = elevOf(tr.deck) + 0.7 + (tr.hoverY || 0);
             const range3 = Math.hypot(tx - sx, tz - sz);
             const sp = (0.22 + range3 * 0.05) * (0.7 + 0.7 * (sh.id * 7 % 5) / 4);
@@ -84031,20 +84066,24 @@ var init_agents3d = __esm({
             tx += px2 * j1;
             tz += pz2 * j1;
             ty += j2;
-            pos.setXYZ(seg * 2, sx, ey, sz);
+            const dx = tx - sx, dz = tz - sz, dl = Math.hypot(dx, dz) || 1;
+            const fx2 = muzzle?.x ?? sx + dx / dl * 1;
+            const fz2 = muzzle?.z ?? sz + dz / dl * 1;
+            pos.setXYZ(seg * 2, fx2, ey, fz2);
             pos.setXYZ(seg * 2 + 1, tx, ty, tz);
             seg++;
             if (counts.flash < CAP) {
-              const dx = tx - sx, dz = tz - sz, dl = Math.hypot(dx, dz) || 1;
               const fs = 0.8 + (sh.id + sim2.tickCount) % 2 * 0.6;
-              const fx2 = sx + dx / dl * 0.6, fz2 = sz + dz / dl * 0.6;
+              const flashX = muzzle ? fx2 + muzzle.dx * 0.18 : fx2 + dx / dl * 0.18;
+              const flashY = muzzle ? ey + muzzle.dy * 0.18 : ey;
+              const flashZ = muzzle ? fz2 + muzzle.dz * 0.18 : fz2 + dz / dl * 0.18;
               this._m.compose(
-                this._p.set(fx2, ey, fz2),
+                this._p.set(flashX, flashY, flashZ),
                 this._q.identity(),
                 this._s.set(fs, fs, fs)
               );
               this.flash.setMatrixAt(counts.flash++, this._m);
-              if (this.flashPoints.length < 3) this.flashPoints.push({ x: fx2, y: ey, z: fz2 });
+              if (this.flashPoints.length < 3) this.flashPoints.push({ x: flashX, y: flashY, z: flashZ });
             }
           }
         }
@@ -84185,6 +84224,17 @@ var init_agents3d = __esm({
           this._s.set(1, 1, 1)
         );
       }
+      _rememberRifleMuzzle(id) {
+        const e2 = this._m.elements;
+        this._muzzleById.set(id, {
+          x: e2[12] + e2[0] * RIFLE_TIP + e2[4] * 0.015,
+          y: e2[13] + e2[1] * RIFLE_TIP + e2[5] * 0.015,
+          z: e2[14] + e2[2] * RIFLE_TIP + e2[6] * 0.015,
+          dx: e2[0],
+          dy: e2[1],
+          dz: e2[2]
+        });
+      }
       // The torch points WHERE HE IS LOOKING. Riding _rifleAt put the cone on the
       // low-ready rifle, which is held across the chest — so the beam came out of
       // the marine's sternum and threw off to one side (user screenshot).
@@ -84311,7 +84361,6 @@ var init_agents3d = __esm({
           this._ragRest.delete(id);
           return false;
         }
-        this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]]);
         if (thrashing) {
           const ti = this._thrashInfo?.get(id);
           const tn = performance.now();
@@ -84349,6 +84398,8 @@ var init_agents3d = __esm({
             ci = counts.combatCiv++;
           }
         }
+        rag.visualLift = thrashing ? this._ragdollFloorLift(set, rag) : 0;
+        this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]]);
         this._stampRagdoll(set, ci, rag);
         if (flags & FLAG.ARMED_HOST) {
           const gy = this.world.groundHeightAt(deck, rag.rootPos[0], rag.rootPos[2]);
@@ -84442,11 +84493,54 @@ var init_agents3d = __esm({
       // meshes — the same pivot-anchored composition as _stampAnimated, but the
       // limb rotation is a full physics quaternion and the base is the tumbling
       // root instead of the upright pose.
+      _ragdollFloorLift(set, rag) {
+        this._q.set(...rag.rootQuat);
+        this._m.compose(this._p.set(...rag.rootPos), this._q, this._s.set(1, 1, 1));
+        const ground = (x2, z2) => this.world.groundHeightAt(rag.deck, x2, z2);
+        let lift = 0;
+        for (const mesh of set) {
+          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+          const pivot = mesh.userData.pivot;
+          const lq = pivot ? rag.limbs[mesh.userData.part] : null;
+          let matrix = this._m;
+          if (lq) {
+            this._q2.set(...lq);
+            this._mRot.makeRotationFromQuaternion(this._q2);
+            this._mPart.makeTranslation(...pivot).multiply(this._mRot).multiply(this._mOut.makeTranslation(-pivot[0], -pivot[1], -pivot[2]));
+            matrix = this._mOut.multiplyMatrices(this._m, this._mPart);
+          }
+          lift = Math.max(lift, floorLiftForBounds(
+            mesh.geometry.boundingBox,
+            matrix.elements,
+            ground
+          ));
+        }
+        return lift;
+      }
+      _floorCorrectStamped(set, slot, deck) {
+        const ground = (x2, z2) => this.world.groundHeightAt(deck, x2, z2);
+        let lift = 0;
+        for (const mesh of set) {
+          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+          mesh.getMatrixAt(slot, this._mOut);
+          lift = Math.max(lift, floorLiftForBounds(
+            mesh.geometry.boundingBox,
+            this._mOut.elements,
+            ground
+          ));
+        }
+        if (lift <= 0) return;
+        for (const mesh of set) {
+          mesh.getMatrixAt(slot, this._mOut);
+          this._mOut.elements[13] += lift;
+          mesh.setMatrixAt(slot, this._mOut);
+        }
+      }
       _stampRagdoll(set, i2, rag) {
         if (this._curD2 < CAST_NEAR2) this._castNear.add(set);
         this._q.set(rag.rootQuat[0], rag.rootQuat[1], rag.rootQuat[2], rag.rootQuat[3]);
         this._m.compose(
-          this._p.set(rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]),
+          this._p.set(rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]),
           this._q,
           this._s.set(1, 1, 1)
         );
