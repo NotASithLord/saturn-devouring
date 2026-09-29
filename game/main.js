@@ -2767,6 +2767,15 @@ function solidsForShot() {
 // carrier a metre-wide bag, everything else a torso.
 const bodyRadius = (a) => a.faction === 3 ? 0.5 : a.faction === 5 ? 1.0 : 0.7;
 
+// The hit sphere rides the arc the EYE sees, not the sim's raw one: the
+// renderer eases hoverY (agents3d rpos, ~70ms constant), so on a fast pounce
+// the sim value runs ahead of the drawn body and a sphere built from it hangs
+// above/below the visible form. Aim tests must agree with the pixels.
+const hoverOf = (a) => {
+  const rp = agents.rpos.get(a.id);
+  return ((rp ? rp.hoverY : a.hoverY) || 0);
+};
+
 function traceShot(offAng = 0, offRad = 0, maxDist = 100, dmg = MA5.damage) {
   camera.getWorldDirection(_dir);
   _rt.crossVectors(_dir, camera.up).normalize();
@@ -2787,7 +2796,7 @@ function traceShot(offAng = 0, offRad = 0, maxDist = 100, dmg = MA5.damage) {
     // + hoverY: a leaping body's hit sphere rides the arc WITH the body (user
     // report: "their hitbox doesnt seem to track them through the air" — the
     // renderer drew it at elev + hoverY while the bullet swung at the deck)
-    const cy = elevOf(a.deck) + (a.faction === 3 ? 0.35 : a.downed ? 0.35 : 0.9) + (a.hoverY || 0);
+    const cy = elevOf(a.deck) + (a.faction === 3 ? 0.35 : a.downed ? 0.35 : 0.9) + hoverOf(a);
     _hit.set(wx, cy, wz).sub(origin);
     const t = _hit.dot(_dir);
     if (t < 0.05 || t > bestT) continue;
@@ -2860,7 +2869,7 @@ function meleeStrike() {
     const [wx, wz] = world.simToWorld(a.x, a.y, a.deck);
     // + hoverY, same as the bullet: a pouncing pod mid-arc is exactly the
     // thing you butt-stroke out of the air
-    const cy = elevOf(a.deck) + (a.faction === 3 ? 0.35 : a.downed ? 0.35 : 0.9) + (a.hoverY || 0);
+    const cy = elevOf(a.deck) + (a.faction === 3 ? 0.35 : a.downed ? 0.35 : 0.9) + hoverOf(a);
     const d = meleeArcDistance(origin.x, origin.z, feetY, fx, fz,
       wx, cy, wz, bodyRadius(a), MA5.meleeRange);
     if (d < 0 || d >= bestD) continue;
@@ -2923,7 +2932,7 @@ function solveFlameAim() {
   let target = null, targetT = Infinity;
   for (const a of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a.x, a.y, a.deck);
-    const cy = elevOf(a.deck) + (a.faction === 3 ? 0.35 : a.downed ? 0.35 : 0.9) + (a.hoverY || 0);
+    const cy = elevOf(a.deck) + (a.faction === 3 ? 0.35 : a.downed ? 0.35 : 0.9) + hoverOf(a);
     _fto.set(wx, cy, wz).sub(origin);
     const d = _fto.length();
     const along = _fto.dot(_fdir);

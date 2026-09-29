@@ -2,6 +2,8 @@
 // and the schematic layout used both for the debug view and for agent
 // position interpolation.
 
+import { elevOf, stairWellDims } from '../shared/geometry.js';
+
 export const LAYER = { STD: 'std', SHAFT: 'shaft', VENT: 'vent' };
 
 // identity tags for pass predicates (hops-cache keys) — see hops() below
@@ -258,6 +260,19 @@ export class ShipGraph {
         l.horizM = Math.max(2, Math.abs(a.x - b.x));
         l.vertM = Math.abs(a.deck - b.deck) * this.deckHeightM;
         l.flipT = 0.5; // handover halfway up/down the trunk
+        if (l.type === 'stairwell') {
+          // the grand stairwell is WALKED, not ridden: measure the real
+          // switchback — two sloped flights spanning the true two-storey
+          // drop (elevOf knows the hangar lift; deckHeightM undersold it by
+          // half) plus crossing the mid landing. This is what travelSec and
+          // linkCost charge, so the stairs stop being the cheapest "portal"
+          // on the ship and a traversal takes as long as actually walking it.
+          const U = a.deck < b.deck ? a : b;
+          const { wellHx, wellHz, landD } = stairWellDims(U.w / 2, U.d / 2);
+          const drop = Math.abs(elevOf(a.deck) - elevOf(b.deck));
+          l.vertM = drop;
+          l.stairRunM = 2 * Math.hypot(2 * wellHz - landD, drop / 2) + wellHx;
+        }
       }
     };
     for (const l of this.edges) measure(l);
@@ -526,6 +541,7 @@ export class ShipGraph {
     if (l.kind === 'vent') return run * 1.35 / 1.65 + 2.4;
     if (l.type === 'lift') return l.horizM / 1.4 + 10;
     if (l.type === 'ladder') return 1.0 + l.vertM / 1.2; // mount + climb (matches travelSec)
+    if (l.type === 'stairwell') return (l.stairRunM ?? run) / 1.4 + 0.8; // real switchback meters (matches travelSec)
     return run / 1.4 + (l.type === 'blastdoor' ? 2.5 : 0.8);
   }
 

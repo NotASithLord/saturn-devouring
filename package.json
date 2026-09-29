@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "Halo Charon POC — simulation core + VAT rendering validation harness",
+  "description": "Halo Charon POC \u2014 simulation core + VAT rendering validation harness",
   "scripts": {
     "serve": "python3 -m http.server 8000",
     "headless": "node sim/headless.js",
@@ -30,14 +30,15 @@
     "intro": "node game/intro-crawl-check.mjs",
     "commands": "node sim/command-check.js",
     "multiplayer": "node multiplayer/protocol-check.mjs && node multiplayer/game-sync-check.mjs && node multiplayer/lobby-state-check.mjs && node multiplayer/lobby-consensus-check.mjs && node multiplayer/match-launch-check.mjs && node multiplayer/authority-check.mjs && node multiplayer/dweb-client-check.mjs && node multiplayer/session-cancel-check.mjs && node multiplayer/session-capability-check.mjs && node multiplayer/session-error-check.mjs && node multiplayer/voice-check.mjs && node multiplayer/ice-fallback-check.mjs && node worker-check.mjs",
-    "check": "npm run multiplayer && npm run determinism && npm run physics && npm run ragdoll && npm run melee && npm run tactics && npm run charge-pose && npm run armory-release && npm run carrier-defense && npm run radar && npm run respawn && npm run supplies && npm run flame && npm run navigation && npm run opening-count && npm run spawn-lighting && npm run world && npm run spore-fx && npm run melee-arc && npm run controller && npm run warmup && npm run intro && npm run commands && npm run check:dwapp",
+    "check": "npm run multiplayer && npm run determinism && npm run physics && npm run ragdoll && npm run melee && npm run tactics && npm run charge-pose && npm run armory-release && npm run carrier-defense && npm run radar && npm run respawn && npm run supplies && npm run flame && npm run stairs && npm run navigation && npm run opening-count && npm run spawn-lighting && npm run world && npm run spore-fx && npm run melee-arc && npm run controller && npm run warmup && npm run intro && npm run commands && npm run check:dwapp",
     "vendor:peerd": "node scripts/vendor-peerd-browser.mjs",
     "build:dwapp": "node scripts/build-dwapp.mjs",
     "check:dwapp": "node scripts/build-dwapp.mjs --check",
     "check:peerd-compat": "node scripts/check-peerd-compat.mjs",
     "build:site": "node scripts/build-site.mjs",
     "deploy:guard": "node scripts/check-deploy.mjs",
-    "deploy": "npm run build:site && npm run deploy:guard && wrangler deploy"
+    "deploy": "npm run build:site && npm run deploy:guard && wrangler deploy",
+    "stairs": "node sim/stair-check.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",

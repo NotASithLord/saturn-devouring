@@ -496,17 +496,19 @@ export function resolveCombat(sim, dt) {
       const targets = sim.occupants(floodNode).filter((a) => !a.dead && a.hp > 0 && !a.downed &&
         (a.faction === FACTION.COMBAT || a.faction === FACTION.CARRIER || a.faction === FACTION.INFECTION));
       if (!targets.length) continue;
-      sim.gunfireAt(gunNode);
+      let stamped = false;
       for (const sh of shooters) {
         if (sim.t < (sh.nextShotAt ?? 0)) continue;
         // nearest live target (in the deck plane; the storey drop is the same
         // for all, so it just pushes everything past rifleFalloffM -> accFar)
-        const selected = selectRifleTarget(sh.fireTargetId, targets.map((target) => ({
+        const selected = selectRifleTarget(sh.fireTargetId, targets.filter((target) =>
+          sim.losClear(sh.x, sh.y, gunNode, target.x, target.y, floodNode)).map((target) => ({
           target, range: Math.hypot(target.x - sh.x, target.y - sh.y),
         })));
         const best = selected?.target ?? null;
         sh.fireTargetId = best?.id;
-        if (!best) break;
+        if (!best) continue;
+        if (!stamped) { stamped = true; sim.gunfireAt(gunNode); }
         const gun = sh.faction === FACTION.MARINE ? P.combat.marine.gun : P.combat.armed.gun;
         sh.nextShotAt = sim.t + 1 / gun.rof;
         let acc = gun.accFar; // always the long cross-level shot

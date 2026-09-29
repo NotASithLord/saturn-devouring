@@ -5,7 +5,7 @@
 import { RNG } from '../shared/rng.js';
 import { cloneParams } from '../shared/params.js';
 import { AgentBuffer, FACTION, FLAG, CLIP } from '../shared/agentBuffer.js';
-import { clearHeightOf, CLEAR_H } from '../shared/geometry.js';
+import { clearHeightOf, CLEAR_H, stairWellDims } from '../shared/geometry.js';
 import { initRun, STATE, makeAgent } from './init.js';
 import { updateHumansTick, strategicSquads, assignFirstSweep, marineThrowFragAt } from './humans.js';
 import { Hive, TASK, W_FLOOD, W_HUMAN, isActiveFloodForm, isLivingHuman } from './hive.js';
@@ -348,10 +348,21 @@ export class Sim {
     const g = this.graph;
     const n1 = g.node(r1), n2 = g.node(r2);
     if (n1.deck !== n2.deck) {
-      // the grand stairwell is one open two-storey volume — its pair keeps
-      // the sightline it has always had
+      // the grand stairwell is one open two-storey volume, but the SIGHTLINE
+      // between its levels is the well opening, not the whole pair of rooms
+      // (user: LOS rules must apply on the stairs). The entry ring's floor
+      // hides everything whose sight segment doesn't pass over the hole, so:
+      // convert both eyes into the upper room's frame (sim y carries the deck
+      // band) and require the 2D segment to CROSS the well rect.
       for (const sw of g.stairwells) {
-        if ((r1 === sw.upper && r2 === sw.lower) || (r1 === sw.lower && r2 === sw.upper)) return true;
+        if ((r1 === sw.upper && r2 === sw.lower) || (r1 === sw.lower && r2 === sw.upper)) {
+          const U = g.node(sw.upper);
+          const wp = this._stairWaypoints(U);
+          const shift1 = this._bandC(n1.deck) - this._bandC(U.deck);
+          const shift2 = this._bandC(n2.deck) - this._bandC(U.deck);
+          return this._segCrossesRect(x1, y1 - shift1, x2, y2 - shift2,
+            wp.wellX, wp.wellY, wp.wellHx, wp.wellHz);
+        }
       }
       return false;
     }
@@ -383,6 +394,87 @@ export class Sim {
       cur = bestTo;
     }
     return false;
+  }
+
+  // A point f (0..1) of the way along a polyline, by ARC LENGTH — the walk
+  // covers every leg at one speed, however the corners split it.
+  _walkPolyline(pts, f) {
+    let L = 0;
+    for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    let d = Math.max(0, Math.min(1, f)) * L;
+    for (let i = 1; i < pts.length; i++) {
+      const l = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      if (d <= l || i === pts.length - 1) {
+        const u = l > 1e-9 ? Math.min(1, d / l) : 1;
+        return [pts[i - 1].x + (pts[i].x - pts[i - 1].x) * u, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * u];
+      }
+      d -= l;
+    }
+    const p = pts[pts.length - 1];
+    return [p.x, p.y];
+  }
+
+  // Shortest corner detour around an axis-aligned rect (inflated by m) from
+  // (sx,sy) to (tx,ty): [] when the straight segment already clears it, else
+  // one or two corners of the inflated rect. Runs once at move start; used so
+  // a stairwell approach walks AROUND the open well / stair tower instead of
+  // cutting across the hole in plan.
+  _detourAroundRect(sx, sy, tx, ty, cx, cy, hx, hy, m) {
+    const HX = hx + m, HY = hy + m;
+    const blocked = (ax, ay, bx, by) => this._segCrossesRect(ax, ay, bx, by, cx, cy, HX - 0.05, HY - 0.05);
+    // an endpoint stranded INSIDE the rect (a shove, an old save) first steps
+    // out through the nearest face, then routes around like everyone else
+    const inside = (x, y) => Math.abs(x - cx) < HX && Math.abs(y - cy) < HY;
+    if (inside(sx, sy) || inside(tx, ty)) {
+      const esc = (x, y) => {
+        const dW = x - (cx - hx), dE = (cx + hx) - x, dN = y - (cy - hy), dS = (cy + hy) - y;
+        const min = Math.min(dW, dE, dN, dS);
+        if (min === dN) return { x, y: cy - HY };
+        if (min === dS) return { x, y: cy + HY };
+        if (min === dW) return { x: cx - HX, y };
+        return { x: cx + HX, y };
+      };
+      const s2 = inside(sx, sy) ? esc(sx, sy) : null;
+      const t2 = inside(tx, ty) ? esc(tx, ty) : null;
+      const midPts = this._detourAroundRect(s2?.x ?? sx, s2?.y ?? sy, t2?.x ?? tx, t2?.y ?? ty, cx, cy, hx, hy, m);
+      return [...(s2 ? [s2] : []), ...midPts, ...(t2 ? [t2] : [])];
+    }
+    if (!blocked(sx, sy, tx, ty)) return [];
+    const C = [
+      { x: cx - HX, y: cy - HY }, { x: cx + HX, y: cy - HY },
+      { x: cx - HX, y: cy + HY }, { x: cx + HX, y: cy + HY },
+    ];
+    let best = null, bestL = Infinity;
+    const consider = (pts) => {
+      let px = sx, py = sy, L = 0;
+      for (const p of pts) {
+        if (blocked(px, py, p.x, p.y)) return;
+        L += Math.hypot(p.x - px, p.y - py); px = p.x; py = p.y;
+      }
+      if (blocked(px, py, tx, ty)) return;
+      L += Math.hypot(tx - px, ty - py);
+      if (L < bestL - 1e-9) { bestL = L; best = pts; }
+    };
+    for (const c of C) consider([c]);
+    for (const c1 of C) for (const c2 of C) if (c1 !== c2) consider([c1, c2]);
+    return best ?? [];
+  }
+
+  // Does the 2D segment (x1,y1)->(x2,y2) pass through the axis-aligned rect
+  // centred (cx,cy) half-extents (hx,hy)? Liang–Barsky clip; endpoints inside
+  // count (a body standing ON the stairs is in the sightline volume itself).
+  _segCrossesRect(x1, y1, x2, y2, cx, cy, hx, hy) {
+    const dx = x2 - x1, dy = y2 - y1;
+    let t0 = 0, t1 = 1;
+    const clip = (p, q) => {
+      if (Math.abs(p) < 1e-12) return q >= 0;
+      const r = q / p;
+      if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+      return true;
+    };
+    return clip(-dx, x1 - (cx - hx)) && clip(dx, (cx + hx) - x1)
+      && clip(-dy, y1 - (cy - hy)) && clip(dy, (cy + hy) - y1);
   }
 
   // Real-space perception shared by combat and behavior. Rooms remain the
@@ -1541,6 +1633,11 @@ export class Sim {
     // time made every one-at-a-time climb a ~12 s ladder monopoly and the
     // queues behind it jammed for minutes (user rule: queued, not jammed).
     if (link.type === 'ladder') return 1.0 + link.vertM / M.ladderClimbMps;
+    // the grand stairwell is WALKED tread by tread: the ride pays for the real
+    // switchback meters (two sloped flights + the landing, measured by the
+    // graph), not the fore-aft room offset the generic branch would use —
+    // that 5 s ride covered ~22 m of stairs and read as teleporting
+    if (link.type === 'stairwell') return (link.stairRunM ?? run) / mps + 0.5;
     return run / mps + (M.doorDelaySec[link.type] ?? 0);
   }
 
@@ -1847,12 +1944,18 @@ export class Sim {
           const px0 = a.x, py0 = a.y;                // last point, for heading
           if (k < appT) {
             // walk from where you stood to the stair mouth, in the ORIGIN room's
-            // own frame: the top of the flight if descending, the foot of it
-            // (converted down a deck) if climbing
-            const sx = a.move.sx ?? from.x, sy = a.move.sy ?? from.y;
-            const mouth = descending ? A : footLo;
+            // own frame — along the move's approach POLYLINE, which detours
+            // around the open well / stair tower (a straight line cut across
+            // the hole in plan, and the body dipped through the switchback)
             const kk = appT > 1e-6 ? k / appT : 1;
-            a.x = sx + (mouth.x - sx) * kk; a.y = sy + (mouth.y - sy) * kk;
+            if (a.move.appPts) {
+              const [ax, ay] = this._walkPolyline(a.move.appPts, kk);
+              a.x = ax; a.y = ay;
+            } else {
+              const sx = a.move.sx ?? from.x, sy = a.move.sy ?? from.y;
+              const mouth = descending ? A : footLo;
+              a.x = sx + (mouth.x - sx) * kk; a.y = sy + (mouth.y - sy) * kk;
+            }
           } else if (k < handT) {
             // ON THE SWITCHBACK: A → mid landing → B, in the UPPER room's frame.
             // deck = upper for the ride (the well is one two-storey volume) so
@@ -1869,10 +1972,15 @@ export class Sim {
             // destination room's frame, to this body's own parking slot over
             // what's left of the leg — the same shape the duct exit uses.
             if (a.node !== a.move.to) { a.node = a.move.to; a.deck = to.deck; }
-            const [tx, ty] = this._parkSlot(a, to);
             const kk = handT < 1 ? Math.min(1, (k - handT) / (1 - handT)) : 1;
-            a.x = Bdest.x + (tx - Bdest.x) * kk;
-            a.y = Bdest.y + (ty - Bdest.y) * kk;
+            if (a.move.exitPts) {
+              const [ax, ay] = this._walkPolyline(a.move.exitPts, kk);
+              a.x = ax; a.y = ay;
+            } else {
+              const [tx, ty] = this._parkSlot(a, to);
+              a.x = Bdest.x + (tx - Bdest.x) * kk;
+              a.y = Bdest.y + (ty - Bdest.y) * kk;
+            }
           }
           a.heading = Math.atan2(a.y - py0, a.x - px0) || a.heading;
         } else if (a.move.layer === 'std' && from.deck !== to.deck) {
@@ -2211,6 +2319,20 @@ export class Sim {
               const mouth = fromN === upper ? wp.top : wp.foot;
               px = mouth.x;
               py = mouth.y + shift;
+              // BOTH walking legs are POLYLINES that detour around the well
+              // rect (the open hole at entry level, the enclosed stair tower
+              // at hangar level): a straight line to the mouth cut across the
+              // hole in plan and the body dipped through the switchback (the
+              // stair-check's floor-height watchdog caught exactly this).
+              // Both mouths open onto the well's FORE edge, so each leg goes
+              // through a pre-mouth point just outside that edge and enters
+              // straight through it.
+              const preY = wp.wellY - wp.wellHz - 0.9;
+              const pre = { x: px, y: preY + shift };
+              const appPts = [{ x: a.x, y: a.y },
+                ...this._detourAroundRect(a.x, a.y, pre.x, pre.y,
+                  wp.wellX, wp.wellY + shift, wp.wellHx, wp.wellHz, 0.9),
+                pre, { x: px, y: py }];
               // ...and pay for the walk OFF the far mouth to this body's own
               // slot in the destination room, at walking pace (the ride used
               // to hand over at a fixed 82% and then cover that ground in the
@@ -2218,11 +2340,23 @@ export class Sim {
               const exitShift = this._bandC(toN.deck) - this._bandC(upper.deck);
               const far = fromN === upper ? wp.foot : wp.top;
               const [sx2, sy2] = this._parkSlot(a, toN);
-              const exitSec = Math.hypot(sx2 - far.x, sy2 - (far.y + exitShift)) / mps;
-              const appSec2 = Math.hypot(px - a.x, py - a.y) / mps;
+              const preD = { x: far.x, y: preY + exitShift };
+              const exitPts = [{ x: far.x, y: far.y + exitShift }, preD,
+                ...this._detourAroundRect(preD.x, preD.y, sx2, sy2,
+                  wp.wellX, wp.wellY + exitShift, wp.wellHx, wp.wellHz, 0.9),
+                { x: sx2, y: sy2 }];
+              const plen = (pts) => {
+                let L = 0;
+                for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+                return L;
+              };
+              const appSec2 = plen(appPts) / mps;
+              const exitSec = plen(exitPts) / mps;
               a.move.travelSec += appSec2 + exitSec;
               a.move.appT = appSec2 / a.move.travelSec;
               a.move.exitT = exitSec / a.move.travelSec;
+              a.move.appPts = appPts;
+              a.move.exitPts = exitPts;
             } else {
               // walk to the REAL trunk pad (the drawn well), not a clamp guess
               const pad = (link.a === a.node ? link.padA : link.padB);
@@ -2741,6 +2875,46 @@ export class Sim {
     const hw = Math.max(0, room.w / 2 - r), hd = Math.max(0, room.d / 2 - r);
     a.x = Math.max(room.x - hw, Math.min(room.x + hw, a.x));
     a.y = Math.max(room.y - hd, Math.min(room.y + hd, a.y));
+    // ...and out of the stair well/tower footprint (user: bodies parked over
+    // the open hole / inside the enclosed stair tower — the render slid them
+    // out visually while the sim swore they stood in the void, and any move
+    // that started there began with a plunge). A body legitimately WALKING
+    // the switchback is the one exception.
+    if (a.move?.link?.type !== 'stairwell') {
+      const [wx, wy] = this._slideOutOfWell(room, a.x, a.y);
+      a.x = wx; a.y = wy;
+    }
+  }
+
+  // The well/tower footprint to keep SIM positions out of, in node nd's own
+  // frame: the open well cut into the stairwell room, and the enclosed stair
+  // tower standing on the same spot on the deck below. null elsewhere.
+  _stairAvoid(nd) {
+    const cache = (this._stairAvoidCache ??= new Map());
+    if (cache.has(nd.idx)) return cache.get(nd.idx);
+    let out = null;
+    for (const s of this.graph.stairwells) {
+      if (nd.idx !== s.upper && nd.idx !== s.lower) continue;
+      const U = this.graph.node(s.upper);
+      const wp = this._stairWaypoints(U);
+      const shift = this._bandC(nd.deck) - this._bandC(U.deck);
+      out = { x: wp.wellX, y: wp.wellY + shift, hx: wp.wellHx, hy: wp.wellHz };
+    }
+    cache.set(nd.idx, out);
+    return out;
+  }
+
+  // slide a point out of the room's stair well/tower rect through the
+  // nearest face (the same rule the render's clamps use), or return it as-is
+  _slideOutOfWell(nd, x, y, m = 0.5) {
+    const w = this._stairAvoid(nd);
+    if (!w || Math.abs(x - w.x) > w.hx + m - 1e-9 || Math.abs(y - w.y) > w.hy + m - 1e-9) return [x, y];
+    const dW = x - (w.x - w.hx), dE = (w.x + w.hx) - x, dN = y - (w.y - w.hy), dS = (w.y + w.hy) - y;
+    const min = Math.min(dW, dE, dN, dS);
+    if (min === dN) return [x, w.y - w.hy - m];
+    if (min === dS) return [x, w.y + w.hy + m];
+    if (min === dW) return [w.x - w.hx - m, y];
+    return [w.x + w.hx + m, y];
   }
 
   _separate(dt) {
@@ -3032,7 +3206,11 @@ export class Sim {
     // its center, so arrivals converged there and the separation pass then
     // shoved them apart (user report: marines "zipping to the middle of the
     // room then randomly deploying outward")
-    return [nd.x + Math.cos(ang) * u * hw, nd.y + Math.sin(ang) * u * hd];
+    // ...kept OFF the stair well/tower footprint: a slot over the open hole
+    // parked a body in the void and started every stairwell leg with a spine
+    // crossing (the stair-check's floor-height watchdog caught it)
+    return this._slideOutOfWell(nd,
+      nd.x + Math.cos(ang) * u * hw, nd.y + Math.sin(ang) * u * hd, 0.8);
   }
 
   // A pod already committed to a body emerges toward that body. The grate is
@@ -3064,12 +3242,19 @@ export class Sim {
   }
 
   _stairWaypoints(U) {
-    const wx = U.x + (U.w / 2) * 0.12, wy = U.y;
-    const hx = Math.min(6.5, (U.w / 2) * 0.42), hy = Math.min(6, (U.d / 2) * 0.34);
+    // shared/geometry.js stairWellDims is the ONE source for the well rect —
+    // the renderer's _stairGeom reads the same numbers, so the walked path
+    // lands on the visible treads by construction (world X == sim X)
+    const { ox, wellHx, wellHz, landD } = stairWellDims(U.w / 2, U.d / 2);
+    const wx = U.x + ox, wy = U.y;
     return {
-      top: { x: wx - hx * 0.45, y: wy - hy * 0.82 },   // upper flight, front-left
-      mid: { x: wx, y: wy + hy * 0.72 },               // landing, back-centre
-      foot: { x: wx + hx * 0.45, y: wy - hy * 0.82 },  // lower flight, front-right
+      // the mouths sit near the FRONT edge of each flight (0.92, was 0.82):
+      // the closer to the edge, the smaller the floor step when the deck
+      // label flips there — the traversal is height-continuous at both ends
+      top: { x: wx - wellHx * 0.45, y: wy - wellHz * 0.92 },   // upper flight, front-left
+      mid: { x: wx, y: wy + wellHz - landD / 2 },              // centre of the FLAT landing
+      foot: { x: wx + wellHx * 0.45, y: wy - wellHz * 0.92 },  // lower flight, front-right
+      wellX: wx, wellY: wy, wellHx, wellHz,                    // the well rect (for LOS)
     };
   }
 

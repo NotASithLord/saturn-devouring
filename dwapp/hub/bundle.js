@@ -68933,7 +68933,7 @@ function validGamePacket(packet) {
 var PROTOCOL_VERSION, MAX_PLAYERS, QUICKPLAY_ROOM, ROOM_PREFIX, SAFE_CODE, PUBLIC_LOBBY, GAME_KINDS, bytesToHex, hexToBytes;
 var init_protocol = __esm({
   "multiplayer/protocol.js"() {
-    PROTOCOL_VERSION = 18;
+    PROTOCOL_VERSION = 19;
     MAX_PLAYERS = 4;
     QUICKPLAY_ROOM = `charon:quickplay:v${PROTOCOL_VERSION}`;
     ROOM_PREFIX = `charon:v${PROTOCOL_VERSION}:`;
@@ -69907,13 +69907,33 @@ function clearHeightOf(node) {
   const gap = elevOf(node.deck - 1) - elevOf(node.deck);
   return Math.min(gap - 0.3, 8);
 }
-var DECK_H, CLEAR_H, HANGAR_LIFT, TALL_ROLES;
+function stairWellDims(hx, hz) {
+  const wellHx = Math.min(6.5, hx * 0.42), wellHz = Math.min(6, hz * 0.34);
+  return {
+    ox: hx * 0.12,
+    // well centre offset from room centre
+    wellHx,
+    wellHz,
+    landD: Math.min(STAIR_LAND_D, wellHz)
+    // never deeper than half the well
+  };
+}
+function switchbackElev(hi, lo, wellHx, wellHz, landD, lx, lz) {
+  if (lx < -wellHx || lx > wellHx || lz < -wellHz || lz > wellHz) return null;
+  const mid = (hi + lo) / 2;
+  if (lz >= wellHz - landD) return mid;
+  const t2 = (lz + wellHz) / (2 * wellHz - landD);
+  if (lx < 0) return hi - (hi - mid) * t2;
+  return lo + (mid - lo) * t2;
+}
+var DECK_H, CLEAR_H, HANGAR_LIFT, TALL_ROLES, STAIR_LAND_D;
 var init_geometry = __esm({
   "shared/geometry.js"() {
     DECK_H = 4.2;
     CLEAR_H = 3;
     HANGAR_LIFT = 4;
     TALL_ROLES = ["hangar", "large", "battery", "magazine", "stairwell", "vehicles"];
+    STAIR_LAND_D = 3.2;
   }
 });
 
@@ -69924,6 +69944,7 @@ function humanPass(link) {
 var LAYER, _ffSeq, EDGE_PREFIX, ShipGraph, marinePass;
 var init_graph = __esm({
   "sim/graph.js"() {
+    init_geometry();
     LAYER = { STD: "std", SHAFT: "shaft", VENT: "vent" };
     _ffSeq = 0;
     EDGE_PREFIX = { hatch: "H", blastdoor: "B", lift: "L", ladder: "K", stairwell: "T" };
@@ -70119,6 +70140,13 @@ var init_graph = __esm({
             l2.horizM = Math.max(2, Math.abs(a2.x - b2.x));
             l2.vertM = Math.abs(a2.deck - b2.deck) * this.deckHeightM;
             l2.flipT = 0.5;
+            if (l2.type === "stairwell") {
+              const U2 = a2.deck < b2.deck ? a2 : b2;
+              const { wellHx, wellHz, landD } = stairWellDims(U2.w / 2, U2.d / 2);
+              const drop = Math.abs(elevOf(a2.deck) - elevOf(b2.deck));
+              l2.vertM = drop;
+              l2.stairRunM = 2 * Math.hypot(2 * wellHz - landD, drop / 2) + wellHx;
+            }
           }
         };
         for (const l2 of this.edges) measure(l2);
@@ -70391,6 +70419,7 @@ var init_graph = __esm({
         if (l2.kind === "vent") return run * 1.35 / 1.65 + 2.4;
         if (l2.type === "lift") return l2.horizM / 1.4 + 10;
         if (l2.type === "ladder") return 1 + l2.vertM / 1.2;
+        if (l2.type === "stairwell") return (l2.stairRunM ?? run) / 1.4 + 0.8;
         return run / 1.4 + (l2.type === "blastdoor" ? 2.5 : 0.8);
       }
       // Fastest path from -> to as [{to, link, layer}] steps, or null.
@@ -75229,16 +75258,20 @@ function resolveCombat(sim2, dt) {
       const gn = sim2.graph.node(gunNode);
       const targets = sim2.occupants(floodNode).filter((a2) => !a2.dead && a2.hp > 0 && !a2.downed && (a2.faction === FACTION.COMBAT || a2.faction === FACTION.CARRIER || a2.faction === FACTION.INFECTION));
       if (!targets.length) continue;
-      sim2.gunfireAt(gunNode);
+      let stamped = false;
       for (const sh of shooters) {
         if (sim2.t < (sh.nextShotAt ?? 0)) continue;
-        const selected = selectRifleTarget(sh.fireTargetId, targets.map((target) => ({
+        const selected = selectRifleTarget(sh.fireTargetId, targets.filter((target) => sim2.losClear(sh.x, sh.y, gunNode, target.x, target.y, floodNode)).map((target) => ({
           target,
           range: Math.hypot(target.x - sh.x, target.y - sh.y)
         })));
         const best = selected?.target ?? null;
         sh.fireTargetId = best?.id;
-        if (!best) break;
+        if (!best) continue;
+        if (!stamped) {
+          stamped = true;
+          sim2.gunfireAt(gunNode);
+        }
         const gun = sh.faction === FACTION.MARINE ? P2.combat.marine.gun : P2.combat.armed.gun;
         sh.nextShotAt = sim2.t + 1 / gun.rof;
         let acc = gun.accFar;
@@ -75976,7 +76009,22 @@ var init_sim = __esm({
         const n1 = g2.node(r1), n2 = g2.node(r2);
         if (n1.deck !== n2.deck) {
           for (const sw of g2.stairwells) {
-            if (r1 === sw.upper && r2 === sw.lower || r1 === sw.lower && r2 === sw.upper) return true;
+            if (r1 === sw.upper && r2 === sw.lower || r1 === sw.lower && r2 === sw.upper) {
+              const U2 = g2.node(sw.upper);
+              const wp = this._stairWaypoints(U2);
+              const shift1 = this._bandC(n1.deck) - this._bandC(U2.deck);
+              const shift2 = this._bandC(n2.deck) - this._bandC(U2.deck);
+              return this._segCrossesRect(
+                x1,
+                y1 - shift1,
+                x2,
+                y2 - shift2,
+                wp.wellX,
+                wp.wellY,
+                wp.wellHx,
+                wp.wellHz
+              );
+            }
           }
           return false;
         }
@@ -76010,6 +76058,93 @@ var init_sim = __esm({
           cur = bestTo;
         }
         return false;
+      }
+      // A point f (0..1) of the way along a polyline, by ARC LENGTH — the walk
+      // covers every leg at one speed, however the corners split it.
+      _walkPolyline(pts, f2) {
+        let L2 = 0;
+        for (let i2 = 1; i2 < pts.length; i2++) L2 += Math.hypot(pts[i2].x - pts[i2 - 1].x, pts[i2].y - pts[i2 - 1].y);
+        let d2 = Math.max(0, Math.min(1, f2)) * L2;
+        for (let i2 = 1; i2 < pts.length; i2++) {
+          const l2 = Math.hypot(pts[i2].x - pts[i2 - 1].x, pts[i2].y - pts[i2 - 1].y);
+          if (d2 <= l2 || i2 === pts.length - 1) {
+            const u2 = l2 > 1e-9 ? Math.min(1, d2 / l2) : 1;
+            return [pts[i2 - 1].x + (pts[i2].x - pts[i2 - 1].x) * u2, pts[i2 - 1].y + (pts[i2].y - pts[i2 - 1].y) * u2];
+          }
+          d2 -= l2;
+        }
+        const p2 = pts[pts.length - 1];
+        return [p2.x, p2.y];
+      }
+      // Shortest corner detour around an axis-aligned rect (inflated by m) from
+      // (sx,sy) to (tx,ty): [] when the straight segment already clears it, else
+      // one or two corners of the inflated rect. Runs once at move start; used so
+      // a stairwell approach walks AROUND the open well / stair tower instead of
+      // cutting across the hole in plan.
+      _detourAroundRect(sx, sy, tx, ty, cx, cy, hx, hy, m2) {
+        const HX = hx + m2, HY = hy + m2;
+        const blocked = (ax, ay, bx, by) => this._segCrossesRect(ax, ay, bx, by, cx, cy, HX - 0.05, HY - 0.05);
+        const inside = (x2, y2) => Math.abs(x2 - cx) < HX && Math.abs(y2 - cy) < HY;
+        if (inside(sx, sy) || inside(tx, ty)) {
+          const esc = (x2, y2) => {
+            const dW = x2 - (cx - hx), dE = cx + hx - x2, dN = y2 - (cy - hy), dS = cy + hy - y2;
+            const min3 = Math.min(dW, dE, dN, dS);
+            if (min3 === dN) return { x: x2, y: cy - HY };
+            if (min3 === dS) return { x: x2, y: cy + HY };
+            if (min3 === dW) return { x: cx - HX, y: y2 };
+            return { x: cx + HX, y: y2 };
+          };
+          const s2 = inside(sx, sy) ? esc(sx, sy) : null;
+          const t2 = inside(tx, ty) ? esc(tx, ty) : null;
+          const midPts = this._detourAroundRect(s2?.x ?? sx, s2?.y ?? sy, t2?.x ?? tx, t2?.y ?? ty, cx, cy, hx, hy, m2);
+          return [...s2 ? [s2] : [], ...midPts, ...t2 ? [t2] : []];
+        }
+        if (!blocked(sx, sy, tx, ty)) return [];
+        const C2 = [
+          { x: cx - HX, y: cy - HY },
+          { x: cx + HX, y: cy - HY },
+          { x: cx - HX, y: cy + HY },
+          { x: cx + HX, y: cy + HY }
+        ];
+        let best = null, bestL = Infinity;
+        const consider = (pts) => {
+          let px2 = sx, py2 = sy, L2 = 0;
+          for (const p2 of pts) {
+            if (blocked(px2, py2, p2.x, p2.y)) return;
+            L2 += Math.hypot(p2.x - px2, p2.y - py2);
+            px2 = p2.x;
+            py2 = p2.y;
+          }
+          if (blocked(px2, py2, tx, ty)) return;
+          L2 += Math.hypot(tx - px2, ty - py2);
+          if (L2 < bestL - 1e-9) {
+            bestL = L2;
+            best = pts;
+          }
+        };
+        for (const c2 of C2) consider([c2]);
+        for (const c1 of C2) for (const c2 of C2) if (c1 !== c2) consider([c1, c2]);
+        return best ?? [];
+      }
+      // Does the 2D segment (x1,y1)->(x2,y2) pass through the axis-aligned rect
+      // centred (cx,cy) half-extents (hx,hy)? Liang–Barsky clip; endpoints inside
+      // count (a body standing ON the stairs is in the sightline volume itself).
+      _segCrossesRect(x1, y1, x2, y2, cx, cy, hx, hy) {
+        const dx = x2 - x1, dy = y2 - y1;
+        let t0 = 0, t1 = 1;
+        const clip = (p2, q2) => {
+          if (Math.abs(p2) < 1e-12) return q2 >= 0;
+          const r2 = q2 / p2;
+          if (p2 < 0) {
+            if (r2 > t1) return false;
+            if (r2 > t0) t0 = r2;
+          } else {
+            if (r2 < t0) return false;
+            if (r2 < t1) t1 = r2;
+          }
+          return true;
+        };
+        return clip(-dx, x1 - (cx - hx)) && clip(dx, cx + hx - x1) && clip(-dy, y1 - (cy - hy)) && clip(dy, cy + hy - y1);
       }
       // Real-space perception shared by combat and behavior. Rooms remain the
       // pathfinding mesh, but they no longer decide who can see whom: any live
@@ -77034,6 +77169,7 @@ var init_sim = __esm({
         const mps = M2.baseMps * Math.max(0.2, mult);
         if (link.type === "lift") return link.horizM / mps + M2.liftSec;
         if (link.type === "ladder") return 1 + link.vertM / M2.ladderClimbMps;
+        if (link.type === "stairwell") return (link.stairRunM ?? run) / mps + 0.5;
         return run / mps + (M2.doorDelaySec[link.type] ?? 0);
       }
       // A vent order still begins with a real walk to the grate. Route that short
@@ -77283,11 +77419,17 @@ var init_sim = __esm({
               const handT = Math.max(appT + 1e-3, 1 - exitT);
               const px0 = a2.x, py0 = a2.y;
               if (k2 < appT) {
-                const sx = a2.move.sx ?? from.x, sy = a2.move.sy ?? from.y;
-                const mouth = descending ? A2 : footLo;
                 const kk = appT > 1e-6 ? k2 / appT : 1;
-                a2.x = sx + (mouth.x - sx) * kk;
-                a2.y = sy + (mouth.y - sy) * kk;
+                if (a2.move.appPts) {
+                  const [ax, ay] = this._walkPolyline(a2.move.appPts, kk);
+                  a2.x = ax;
+                  a2.y = ay;
+                } else {
+                  const sx = a2.move.sx ?? from.x, sy = a2.move.sy ?? from.y;
+                  const mouth = descending ? A2 : footLo;
+                  a2.x = sx + (mouth.x - sx) * kk;
+                  a2.y = sy + (mouth.y - sy) * kk;
+                }
               } else if (k2 < handT) {
                 if (a2.deck !== upper.deck) {
                   a2.deck = upper.deck;
@@ -77308,10 +77450,16 @@ var init_sim = __esm({
                   a2.node = a2.move.to;
                   a2.deck = to.deck;
                 }
-                const [tx, ty] = this._parkSlot(a2, to);
                 const kk = handT < 1 ? Math.min(1, (k2 - handT) / (1 - handT)) : 1;
-                a2.x = Bdest.x + (tx - Bdest.x) * kk;
-                a2.y = Bdest.y + (ty - Bdest.y) * kk;
+                if (a2.move.exitPts) {
+                  const [ax, ay] = this._walkPolyline(a2.move.exitPts, kk);
+                  a2.x = ax;
+                  a2.y = ay;
+                } else {
+                  const [tx, ty] = this._parkSlot(a2, to);
+                  a2.x = Bdest.x + (tx - Bdest.x) * kk;
+                  a2.y = Bdest.y + (ty - Bdest.y) * kk;
+                }
               }
               a2.heading = Math.atan2(a2.y - py0, a2.x - px0) || a2.heading;
             } else if (a2.move.layer === "std" && from.deck !== to.deck) {
@@ -77522,14 +77670,56 @@ var init_sim = __esm({
                   const mouth = fromN === upper ? wp.top : wp.foot;
                   px2 = mouth.x;
                   py2 = mouth.y + shift;
+                  const preY = wp.wellY - wp.wellHz - 0.9;
+                  const pre = { x: px2, y: preY + shift };
+                  const appPts = [
+                    { x: a2.x, y: a2.y },
+                    ...this._detourAroundRect(
+                      a2.x,
+                      a2.y,
+                      pre.x,
+                      pre.y,
+                      wp.wellX,
+                      wp.wellY + shift,
+                      wp.wellHx,
+                      wp.wellHz,
+                      0.9
+                    ),
+                    pre,
+                    { x: px2, y: py2 }
+                  ];
                   const exitShift = this._bandC(toN.deck) - this._bandC(upper.deck);
                   const far = fromN === upper ? wp.foot : wp.top;
                   const [sx2, sy2] = this._parkSlot(a2, toN);
-                  const exitSec = Math.hypot(sx2 - far.x, sy2 - (far.y + exitShift)) / mps;
-                  const appSec2 = Math.hypot(px2 - a2.x, py2 - a2.y) / mps;
+                  const preD = { x: far.x, y: preY + exitShift };
+                  const exitPts = [
+                    { x: far.x, y: far.y + exitShift },
+                    preD,
+                    ...this._detourAroundRect(
+                      preD.x,
+                      preD.y,
+                      sx2,
+                      sy2,
+                      wp.wellX,
+                      wp.wellY + exitShift,
+                      wp.wellHx,
+                      wp.wellHz,
+                      0.9
+                    ),
+                    { x: sx2, y: sy2 }
+                  ];
+                  const plen = (pts) => {
+                    let L2 = 0;
+                    for (let i2 = 1; i2 < pts.length; i2++) L2 += Math.hypot(pts[i2].x - pts[i2 - 1].x, pts[i2].y - pts[i2 - 1].y);
+                    return L2;
+                  };
+                  const appSec2 = plen(appPts) / mps;
+                  const exitSec = plen(exitPts) / mps;
                   a2.move.travelSec += appSec2 + exitSec;
                   a2.move.appT = appSec2 / a2.move.travelSec;
                   a2.move.exitT = exitSec / a2.move.travelSec;
+                  a2.move.appPts = appPts;
+                  a2.move.exitPts = exitPts;
                 } else {
                   const pad = link.a === a2.node ? link.padA : link.padB;
                   const farPad = link.a === step3.to ? link.padA : link.padB;
@@ -77902,6 +78092,40 @@ var init_sim = __esm({
         const hw = Math.max(0, room.w / 2 - r2), hd = Math.max(0, room.d / 2 - r2);
         a2.x = Math.max(room.x - hw, Math.min(room.x + hw, a2.x));
         a2.y = Math.max(room.y - hd, Math.min(room.y + hd, a2.y));
+        if (a2.move?.link?.type !== "stairwell") {
+          const [wx, wy] = this._slideOutOfWell(room, a2.x, a2.y);
+          a2.x = wx;
+          a2.y = wy;
+        }
+      }
+      // The well/tower footprint to keep SIM positions out of, in node nd's own
+      // frame: the open well cut into the stairwell room, and the enclosed stair
+      // tower standing on the same spot on the deck below. null elsewhere.
+      _stairAvoid(nd) {
+        const cache3 = this._stairAvoidCache ??= /* @__PURE__ */ new Map();
+        if (cache3.has(nd.idx)) return cache3.get(nd.idx);
+        let out = null;
+        for (const s2 of this.graph.stairwells) {
+          if (nd.idx !== s2.upper && nd.idx !== s2.lower) continue;
+          const U2 = this.graph.node(s2.upper);
+          const wp = this._stairWaypoints(U2);
+          const shift = this._bandC(nd.deck) - this._bandC(U2.deck);
+          out = { x: wp.wellX, y: wp.wellY + shift, hx: wp.wellHx, hy: wp.wellHz };
+        }
+        cache3.set(nd.idx, out);
+        return out;
+      }
+      // slide a point out of the room's stair well/tower rect through the
+      // nearest face (the same rule the render's clamps use), or return it as-is
+      _slideOutOfWell(nd, x2, y2, m2 = 0.5) {
+        const w4 = this._stairAvoid(nd);
+        if (!w4 || Math.abs(x2 - w4.x) > w4.hx + m2 - 1e-9 || Math.abs(y2 - w4.y) > w4.hy + m2 - 1e-9) return [x2, y2];
+        const dW = x2 - (w4.x - w4.hx), dE = w4.x + w4.hx - x2, dN = y2 - (w4.y - w4.hy), dS = w4.y + w4.hy - y2;
+        const min3 = Math.min(dW, dE, dN, dS);
+        if (min3 === dN) return [x2, w4.y - w4.hy - m2];
+        if (min3 === dS) return [x2, w4.y + w4.hy + m2];
+        if (min3 === dW) return [w4.x - w4.hx - m2, y2];
+        return [w4.x + w4.hx + m2, y2];
       }
       _separate(dt) {
         const relax = Math.min(1, dt * 10);
@@ -78170,7 +78394,12 @@ var init_sim = __esm({
         const hw = Math.max(0.7, nd.w / 2 - 1), hd = Math.max(0.7, nd.d / 2 - 1);
         const ang = h12 * Math.PI * 2 + nd.idx * 0.7;
         const u2 = Math.sqrt(h2);
-        return [nd.x + Math.cos(ang) * u2 * hw, nd.y + Math.sin(ang) * u2 * hd];
+        return this._slideOutOfWell(
+          nd,
+          nd.x + Math.cos(ang) * u2 * hw,
+          nd.y + Math.sin(ang) * u2 * hd,
+          0.8
+        );
       }
       // A pod already committed to a body emerges toward that body. The grate is
       // still a real waypoint; only the arbitrary post-exit parking detour goes.
@@ -78199,15 +78428,23 @@ var init_sim = __esm({
         return (b2.y0 + b2.y1) / 2;
       }
       _stairWaypoints(U2) {
-        const wx = U2.x + U2.w / 2 * 0.12, wy = U2.y;
-        const hx = Math.min(6.5, U2.w / 2 * 0.42), hy = Math.min(6, U2.d / 2 * 0.34);
+        const { ox, wellHx, wellHz, landD } = stairWellDims(U2.w / 2, U2.d / 2);
+        const wx = U2.x + ox, wy = U2.y;
         return {
-          top: { x: wx - hx * 0.45, y: wy - hy * 0.82 },
+          // the mouths sit near the FRONT edge of each flight (0.92, was 0.82):
+          // the closer to the edge, the smaller the floor step when the deck
+          // label flips there — the traversal is height-continuous at both ends
+          top: { x: wx - wellHx * 0.45, y: wy - wellHz * 0.92 },
           // upper flight, front-left
-          mid: { x: wx, y: wy + hy * 0.72 },
-          // landing, back-centre
-          foot: { x: wx + hx * 0.45, y: wy - hy * 0.82 }
+          mid: { x: wx, y: wy + wellHz - landD / 2 },
+          // centre of the FLAT landing
+          foot: { x: wx + wellHx * 0.45, y: wy - wellHz * 0.92 },
           // lower flight, front-right
+          wellX: wx,
+          wellY: wy,
+          wellHx,
+          wellHz
+          // the well rect (for LOS)
         };
       }
       // COMMITTED INFECTION target (user rule): the physical node of the body a
@@ -80387,16 +80624,21 @@ var init_world = __esm({
         const hiElev = elevOf(n2.deck);
         const loElev = elevOf(n2.deck + 1);
         const midElev = (hiElev + loElev) / 2;
-        const wellCx = cx + hx * 0.12, wellCz = cz;
-        const wellHx = Math.min(6.5, hx * 0.42), wellHz = Math.min(6, hz * 0.34);
-        return { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz };
+        const { ox, wellHx, wellHz, landD } = stairWellDims(hx, hz);
+        const wellCx = cx + ox, wellCz = cz;
+        return { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz, landD };
       }
       // where in the switchback a well-point sits (or null if outside the well)
       _switchbackY(g2, wx, wz) {
-        if (wx < g2.wellCx - g2.wellHx || wx > g2.wellCx + g2.wellHx || wz < g2.wellCz - g2.wellHz || wz > g2.wellCz + g2.wellHz) return null;
-        const t2 = (wz - (g2.wellCz - g2.wellHz)) / (2 * g2.wellHz);
-        if (wx < g2.wellCx) return g2.hiElev - (g2.hiElev - g2.midElev) * t2;
-        return g2.loElev + (g2.midElev - g2.loElev) * t2;
+        return switchbackElev(
+          g2.hiElev,
+          g2.loElev,
+          g2.wellHx,
+          g2.wellHz,
+          g2.landD,
+          wx - g2.wellCx,
+          wz - g2.wellCz
+        );
       }
       // floor elevation under a world point — the deck floor normally; in a
       // stairwell room, the entry floor or the switchback where it descends.
@@ -80441,7 +80683,8 @@ var init_world = __esm({
       _buildStairRoom(n2) {
         const g2 = this._stairGeom(n2);
         (this.stairRooms ??= []).push({ deck: n2.deck, node: n2.idx, ...g2 });
-        const { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz } = g2;
+        const { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz, landD } = g2;
+        const runZ = 2 * wellHz - landD;
         const matStep = this._mkFloorMat(6121593);
         const matRail = new MeshStandardMaterial({ color: 10135224, roughness: 0.45, metalness: 0.7 });
         const fmat = this._mkFloorMat(9675192);
@@ -80453,9 +80696,9 @@ var init_world = __esm({
         }
         const steps = 9;
         const mkFlight = (xLo, xHi, yStart, yEnd, frontToBack) => {
-          const dz = 2 * wellHz / steps, dy = (yStart - yEnd) / steps;
+          const dz = runZ / steps, dy = (yStart - yEnd) / steps;
           for (let i2 = 0; i2 < steps; i2++) {
-            const zc = frontToBack ? wellCz - wellHz + (i2 + 0.5) * dz : wellCz + wellHz - (i2 + 0.5) * dz;
+            const zc = frontToBack ? wellCz - wellHz + (i2 + 0.5) * dz : wellCz + wellHz - landD - (i2 + 0.5) * dz;
             const yc = yStart - (i2 + 0.5) * dy;
             const tread = new Mesh(
               this._scaleFloorUV(new BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03),
@@ -80468,17 +80711,18 @@ var init_world = __esm({
         mkFlight(wellCx - wellHx, wellCx, hiElev, midElev, true);
         mkFlight(wellCx, wellCx + wellHx, midElev, loElev, false);
         const land = new Mesh(
-          this._scaleFloorUV(new BoxGeometry(2 * wellHx, 0.14, 2), 2 * wellHx, 2),
+          this._scaleFloorUV(new BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD),
           matStep
         );
-        land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - 1);
+        land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - landD / 2);
         this.scene.add(land);
-        const spine = new Mesh(new BoxGeometry(0.14, hiElev - loElev, 2 * wellHz - 2.2), this._matWall);
-        spine.position.set(wellCx, (hiElev + loElev) / 2, wellCz - 1);
+        const spineD = runZ - 0.2;
+        const spine = new Mesh(new BoxGeometry(0.14, hiElev - loElev, spineD), this._matWall);
+        spine.position.set(wellCx, (hiElev + loElev) / 2, wellCz - landD / 2);
         this.scene.add(spine);
         this.wallMeshes.push(spine);
-        const spineCap = new Mesh(new BoxGeometry(0.24, 0.07, 2 * wellHz - 2.2), matRail);
-        spineCap.position.set(wellCx, hiElev + 0.04, wellCz - 1);
+        const spineCap = new Mesh(new BoxGeometry(0.24, 0.07, spineD), matRail);
+        spineCap.position.set(wellCx, hiElev + 0.04, wellCz - landD / 2);
         this.scene.add(spineCap);
         const matPanel = new MeshStandardMaterial({
           map: this._matWall.map,
@@ -80529,21 +80773,20 @@ var init_world = __esm({
             guard(xEdge, (yLo + yHi) / 2, (z0 + z1) / 2, T3, yHi - yLo, z1 - z0);
           }
         };
-        const tOf = (z2) => (z2 - (wellCz - wellHz)) / (2 * wellHz);
-        stepGuard(wellCx - wellHx + T3 / 2, (z2) => hiElev - (hiElev - midElev) * tOf(z2));
-        stepGuard(wellCx + wellHx - T3 / 2, (z2) => loElev + (midElev - loElev) * tOf(z2));
-        const run = 2 * wellHz, rise = hiElev - midElev;
-        const soffitLen = Math.hypot(run, rise);
+        stepGuard(wellCx - wellHx + T3 / 2, (z2) => this._switchbackY(g2, wellCx - wellHx + 0.1, z2) ?? midElev);
+        stepGuard(wellCx + wellHx - T3 / 2, (z2) => this._switchbackY(g2, wellCx + wellHx - 0.1, z2) ?? midElev);
+        const rise = hiElev - midElev;
+        const soffitLen = Math.hypot(runZ, rise);
         const mkSoffit = (xLo, xHi, yMid, slopeSign) => {
           const s2 = new Mesh(new BoxGeometry(xHi - xLo, 0.1, soffitLen), matStep);
-          s2.position.set((xLo + xHi) / 2, yMid - 0.28, wellCz);
-          s2.rotation.x = Math.atan2(rise, run) * slopeSign;
+          s2.position.set((xLo + xHi) / 2, yMid - 0.28, wellCz - landD / 2);
+          s2.rotation.x = Math.atan2(rise, runZ) * slopeSign;
           this.scene.add(s2);
         };
         mkSoffit(wellCx - wellHx, wellCx, (hiElev + midElev) / 2, 1);
         mkSoffit(wellCx, wellCx + wellHx, (midElev + loElev) / 2, -1);
         const fascia = new Mesh(new BoxGeometry(2 * wellHx, 0.34, 0.1), matStep);
-        fascia.position.set(wellCx, midElev - 0.24, wellCz + wellHz - 2);
+        fascia.position.set(wellCx, midElev - 0.24, wellCz + wellHz - landD);
         this.scene.add(fascia);
         guard(wellCx, midElev + RAIL_H / 2, wellCz + wellHz - T3 / 2, 2 * wellHx, RAIL_H, T3);
         const TW = 0.12;
@@ -80560,7 +80803,7 @@ var init_world = __esm({
           const z0 = wellCz - wellHz + s2 / 3 * 2 * wellHz;
           const z1 = wellCz - wellHz + (s2 + 1) / 3 * 2 * wellHz;
           const zc = (z0 + z1) / 2;
-          const top = loElev + (midElev - loElev) * ((zc - (wellCz - wellHz)) / (2 * wellHz)) - 0.12;
+          const top = (this._switchbackY(g2, wellCx + wellHx - 0.1, zc) ?? midElev) - 0.12;
           if (top - loElev < 0.4) continue;
           wallV(wellCx + wellHx + TW / 2, zc, TW, top - loElev, z1 - z0);
         }
@@ -83674,7 +83917,7 @@ var init_agents3d = __esm({
             const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
             let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
             const ey = elevOf(sr.deck) + 1.3;
-            let ty = elevOf(tr.deck) + 0.7;
+            let ty = elevOf(tr.deck) + 0.7 + (tr.hoverY || 0);
             const range3 = Math.hypot(tx - sx, tz - sz);
             const sp = (0.22 + range3 * 0.05) * (0.7 + 0.7 * (sh.id * 7 % 5) / 4);
             const inv = 1 / (range3 || 1);
@@ -83727,8 +83970,8 @@ var init_agents3d = __esm({
           if (!sr || !tr) continue;
           const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
           let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
-          const ey = elevOf(sr.deck) + 1.05;
-          let ty = elevOf(tr.deck) + 0.9;
+          const ey = elevOf(sr.deck) + 1.05 + (sr.hoverY || 0);
+          let ty = elevOf(tr.deck) + 0.9 + (tr.hoverY || 0);
           const fdx = tx - sx, fdz = tz - sz;
           const frange = Math.hypot(fdx, fdz) || 1;
           const fsp = 0.5 + frange * 0.07;
@@ -94758,7 +95001,7 @@ function traceShot(offAng = 0, offRad = 0, maxDist = 100, dmg = MA5.damage) {
   let best = null, bestT = Math.min(maxDist, wallT);
   for (const a2 of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + (a2.hoverY || 0);
+    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + hoverOf(a2);
     _hit.set(wx, cy, wz).sub(origin);
     const t2 = _hit.dot(_dir);
     if (t2 < 0.05 || t2 > bestT) continue;
@@ -94800,7 +95043,7 @@ function meleeStrike() {
   let best = null, bestD = Infinity;
   for (const a2 of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + (a2.hoverY || 0);
+    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + hoverOf(a2);
     const d2 = meleeArcDistance(
       origin.x,
       origin.z,
@@ -94854,7 +95097,7 @@ function solveFlameAim() {
   let target = null, targetT = Infinity;
   for (const a2 of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + (a2.hoverY || 0);
+    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + hoverOf(a2);
     _fto.set(wx, cy, wz).sub(origin);
     const d2 = _fto.length();
     const along = _fto.dot(_fdir);
@@ -95914,7 +96157,7 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _morphed, _gibbed, aggroGlobalAt, _aggroAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, scareState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _morphed, _gibbed, aggroGlobalAt, _aggroAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, scareState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
     init_three_webgpu_module();
@@ -97096,6 +97339,10 @@ var init_main = __esm({
     _hit = new Vector3();
     _shotSolids = null;
     bodyRadius = (a2) => a2.faction === 3 ? 0.5 : a2.faction === 5 ? 1 : 0.7;
+    hoverOf = (a2) => {
+      const rp = agents.rpos.get(a2.id);
+      return (rp ? rp.hoverY : a2.hoverY) || 0;
+    };
     _mdir = new Vector3();
     _mto = new Vector3();
     _mray = new Vector3();
