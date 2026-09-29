@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const LIVE_PROTOCOL_URL = 'https://charon.halo-charon-poc.workers.dev/multiplayer/protocol.js';
+const LIVE_PROTOCOL_URL = 'https://charon.arieldeschapell.workers.dev/multiplayer/protocol.js';
 
 function protocolVersion(source, label) {
   const match = source.match(/PROTOCOL_VERSION\s*=\s*(\d+)/);

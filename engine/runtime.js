@@ -106,20 +106,29 @@ export class QualityGovernor {
     this._evalAt = 0;
     this._slow = 0;
     this._fast = 0;
+    this._resFast = 0;
     this._movedAt = 0;
+    this._resMovedAt = 0;
+    this._resolutionProbe = null;
+    this._resolutionLimits = rungs.map(() => ({ ceiling: Infinity, retryAt: 0, backoffMS: 0 }));
     this._prewarmRun = null;
+    this._resetFrameHistory(0);
   }
 
-  applyRung(i) {
+  applyRung(i, now = performance.now()) {
+    const changed = this.rung !== i;
     this.rung = i;
     this.apply(this.rungs[i], i);
-    if (!this.prewarming) this.fitResolution();
+    if (!this.prewarming) {
+      this.fitResolution(now);
+      if (changed) this.resetFrameTiming(now);
+    }
   }
 
   // Clamp immediately when a rung is selected. Pinned ?q=low/full modes never
   // enter frame()'s adaptive branch, so deferring this work left them at the
   // renderer's boot DPR even when it violated the selected rung.
-  fitResolution() {
+  fitResolution(now = performance.now()) {
     const R = this.rungs[this.rung];
     const viewportW = this.renderer.domElement?.clientWidth || globalThis.innerWidth || 1;
     const viewportH = this.renderer.domElement?.clientHeight || globalThis.innerHeight || 1;
@@ -130,6 +139,7 @@ export class QualityGovernor {
     const current = this.renderer.getPixelRatio();
     const next = Math.max(floor, Math.min(cap, current));
     if (Math.abs(next - current) <= 0.01) return;
+    this._resMovedAt = now;
     this.renderer.setPixelRatio(next);
     this.renderer.setSize(viewportW, viewportH, false);
     this.onResize?.(viewportW, viewportH);
@@ -232,7 +242,7 @@ export class QualityGovernor {
     this.prewarming = false;
     this._prewarmRun = null;
     this.fitResolution();
-    this._resetFrameHistory(performance.now());
+    this.resetFrameTiming(performance.now());
   }
 
   // Warm-up hitches are loading samples, not evidence that gameplay is slow.
@@ -245,6 +255,25 @@ export class QualityGovernor {
     this._slow = 0;
     this._fast = 0;
     this._resFast = 0;
+    this._frameSamples = 0;
+    this._slowSamples = 0;
+    this._hasFrameSample = false;
+  }
+
+  // The host calls this after visibility/wake transitions. A paused interval
+  // is neither workload evidence nor a reason to forget a failed quality probe.
+  resetFrameTiming(now = performance.now()) {
+    if (!Number.isFinite(now)) return;
+    this._resetFrameHistory(now);
+    this._resolutionProbe = null;
+  }
+
+  _rememberSlowResolution(ratio, now, failedRetry = false) {
+    const limit = this._resolutionLimits[this.rung];
+    limit.ceiling = Math.min(limit.ceiling, ratio);
+    limit.backoffMS = failedRetry ? Math.min(300000, Math.max(60000, limit.backoffMS * 2))
+      : Math.max(60000, limit.backoffMS);
+    limit.retryAt = now + limit.backoffMS;
   }
 
   // KEEP WHAT PREWARM BUILT (swarm finding, and the standing "invisible flood"
@@ -280,28 +309,53 @@ export class QualityGovernor {
   // Call once per frame with the real frame delta; walks resolution and
   // rungs on its internal 3s cadence.
   frame(now, dtRealSec, viewportW, viewportH) {
-    const dtMs = Math.min(50, dtRealSec * 1000);
+    if (!Number.isFinite(now) || !Number.isFinite(dtRealSec) || dtRealSec <= 0) return;
+    const dpr = globalThis.devicePixelRatio || 1;
+    if (Number.isFinite(viewportW) && viewportW > 0 && Number.isFinite(viewportH) && viewportH > 0) {
+      const context = this._resolutionContext;
+      const changed = context && (Math.abs(viewportW * viewportH / (context.width * context.height) - 1) > 0.1
+        || Math.abs(dpr - context.dpr) > 0.01);
+      if (!context || changed) this._resolutionContext = { width: viewportW, height: viewportH, dpr };
+      if (changed) {
+        this._resolutionLimits = this.rungs.map(() => ({ ceiling: Infinity, retryAt: 0, backoffMS: 0 }));
+        this.resetFrameTiming(now);
+        this._resMovedAt = now;
+        if (!this.prewarming) this.fitResolution(now);
+      }
+    }
+    const dtMs = dtRealSec * 1000;
     // TIME-BASED, not frame-count. alpha 0.06 is a ~16-frame window: 267ms at
     // 60Hz but only 67ms at 240Hz, so each 3s decision on a high-refresh panel
     // summarised 2% of its own interval.
-    this._ema += (dtMs - this._ema) * (1 - Math.exp(-dtMs / 250));
+    if (!this._hasFrameSample) {
+      this._ema = dtMs;
+      this._interval = Math.min(16.7, Math.max(3.5, dtMs));
+      this._hasFrameSample = true;
+    } else this._ema += (dtMs - this._ema) * (1 - Math.exp(-Math.min(dtMs, 250) / 250));
+    this._frameSamples++;
+    if (dtMs > 20) this._slowSamples++;
     // VSYNC-LOCK detection (user q: "will it re-upgrade when able?"): a
     // 60Hz display never shows sub-16.7ms frames however fast the GPU is,
     // so the old "ema < 13" ascend gate made the ladder a RATCHET there —
     // down, never up. Track the display's own cadence as a rolling min
     // (with a slow upward leak so a one-off fast frame can't pin it), and
-    // treat "ema sitting ON that cadence" as the headroom signal.
+    // Stable delivery only permits a bounded experiment. It does NOT measure
+    // unused GPU capacity: a vsync-limited frame hides its execution cost.
     this._interval = Math.min((this._interval ?? 16.7) + 0.01, Math.max(3.5, dtMs));
-    if (now - this._evalAt <= 3000) return;
+    if (now - this._evalAt <= 3000 || this._frameSamples < 3) return;
     this._evalAt = now;
+    const slowFraction = this._slowSamples / this._frameSamples;
+    const sustainedSlow = this._slowSamples >= 3 && slowFraction >= 0.35;
+    this._frameSamples = 0;
+    this._slowSamples = 0;
     // _interval is a leaky rolling MIN of observed deltas. On a 60Hz panel that
     // IS the refresh interval; on 120/240Hz it is merely the fastest frame we
     // happened to present, so it sits far below the mean forever and `locked`
     // is permanently false — which kills the ascend gate and re-creates the
     // exact ratchet the vsync detection was added to remove. Clamp the FAST
-    // side to the cadence these thresholds are tuned to. The SLOW side still
-    // honours the measurement, so macOS Low Power Mode's 30Hz rAF throttle is
-    // still read correctly as "at cadence, hold quality".
+    // side to the cadence these thresholds are tuned to. A slow rAF stream
+    // alone cannot identify GPU load versus CPU work or browser throttling;
+    // these are delivered-frame quality experiments, not GPU measurements.
     const cadence = this._interval < 16.0 ? 16.7 : this._interval;
     const locked = this._ema <= cadence + 0.8;
     // ...but "at cadence" is NOT headroom when the cadence itself is slow.
@@ -310,11 +364,15 @@ export class QualityGovernor {
     // GPU drowning at 30 fps as a healthy 30 Hz display — it then stops
     // descending and periodically climbs BACK up (playtest: a 2017 integrated
     // GPU pinned at 30). Treat a cadence at/above ~20 ms as evidence of a
-    // problem rather than proof of comfort: hold what we have, never promote.
-    // (macOS Low Power Mode's real 30 Hz rAF lands here too and simply stops
-    // auto-ascending, which is the conservative direction.)
+    // problem rather than proof of comfort: never promote from that alone.
+    // A genuine 30 Hz browser/display throttle also lands here; distinguishing
+    // it from overload would require additional evidence, not a GPU-time guess.
     const slowCadence = cadence > 20;
-    const headroom = this._ema < 13 || (locked && !slowCadence);
+    // A rolling minimum must not gradually redefine a 19-20 ms overload as
+    // a slower display refresh and invite another promotion. The game's
+    // recovery target remains approximately 60 FPS on higher-refresh screens.
+    const stableDelivery = slowFraction <= 0.1 && this._ema <= 17.5
+      && (this._ema < 13 || (locked && !slowCadence));
     // NOTHING moves while pinned or prewarming (swarm finding: the walk used
     // to run on prewarm's TRANSIENT rungs — it read rung 3's 0.60 floor
     // mid-compile-grind and stranded pixel ratio below rung 0's 0.85 floor
@@ -330,27 +388,50 @@ export class QualityGovernor {
     const budgetCap = this.hd ? 9 : Math.max(1, Math.sqrt(this.pixelBudget / ((viewportW * viewportH) || 1)));
     const cap = Math.max(floor, Math.min(window.devicePixelRatio || 1, this.hd ? 2 : R.res[1], budgetCap));
     let next = cur;
-    // EVERY resolution step reallocates the whole post chain on the next
-    // frame (the PassNode HDR target, the bloom mips and the FXAA RTT all
-    // track renderer size) — ~40-50MB of GPU texture churn, a visible
-    // hitch. The walk therefore moves in BIG steps on a COOLDOWN (perf
-    // pass 3): the old 0.15/0.1 steps on a bare 3s cadence meant a machine
-    // hovering around the thresholds — exactly what background apps cause —
-    // reallocated its render targets every 3 seconds indefinitely, a
-    // metronomic stutter the governor itself was manufacturing. The
-    // snap-above-cap correction stays immediate (boot-only) and the
-    // stranded-below-floor self-heal stays immediate (rare, one-off).
+    // Resizing reallocates the post chain, so quality recovery is a small,
+    // measured experiment rather than a repeated +0.2/-0.2 toggle. Remember
+    // slow sizes and bisect toward that boundary. Once the remaining change
+    // is too small to justify a resize, hold it. An occasional bounded retry
+    // allows real workload/hardware recovery without permanently ratcheting.
     const resReady = now - (this._resMovedAt ?? 0) > 9000;
-    const wantAscend = headroom && cur < cap;
+    const wantAscend = stableDelivery && cur < cap;
+    const probe = this._resolutionProbe;
+    const limit = this._resolutionLimits[this.rung];
+    let rejectedProbe = false;
+    if (probe && sustainedSlow && this._ema > 20) {
+      this._rememberSlowResolution(cur, now, probe.retry);
+      next = Math.max(floor, Math.min(cap, probe.from));
+      this._resolutionProbe = null;
+      rejectedProbe = true;
+    } else if (probe && now - probe.at >= 6000) {
+      // Two observation windows survived without a persistent regression.
+      if (probe.retry && cur >= limit.ceiling - 0.01) {
+        limit.ceiling = Infinity;
+        limit.retryAt = 0;
+        limit.backoffMS = 0;
+      }
+      this._resolutionProbe = null;
+    }
     // snap into range FIRST: boot can start above the cap (pixelRatioCap is a
     // fixed 1.25) and no other branch walks it down
     if (cur > cap + 0.01) next = cap;
-    else if (resReady && this._ema > 20 && cur > floor) next = Math.max(floor, cur - 0.2);
-    else if (resReady && wantAscend) {
+    else if (!rejectedProbe && resReady && sustainedSlow && this._ema > 20 && cur > floor) {
+      this._rememberSlowResolution(cur, now);
+      next = Math.max(floor, cur - 0.2);
+      this._resolutionProbe = null;
+    } else if (!rejectedProbe && !this._resolutionProbe && resReady && wantAscend) {
       // ascends need TWO consecutive fast evaluations — a single quiet 3s
       // window between background-app bursts is not proof of headroom, and
       // a failed promotion costs two reallocation hitches (up, then down)
-      if (++this._resFast >= 2) next = Math.min(cap, cur + 0.2);
+      if (++this._resFast >= 2) {
+        const bounded = Math.min(cap, cur + 0.1, (cur + limit.ceiling) / 2);
+        const retry = bounded - cur < 0.02 && now >= limit.retryAt && Number.isFinite(limit.ceiling);
+        const proposal = retry ? Math.min(cap, Math.max(cur + 0.02, limit.ceiling + 0.02), cur + 0.1) : bounded;
+        if (proposal - cur > 0.01 && proposal - cur >= Math.min(0.02, cap - cur) - 1e-9) {
+          next = proposal;
+          this._resolutionProbe = { from: cur, at: now, retry };
+        }
+      }
     } else if (cur < floor - 0.01) next = floor; // self-heal: never sit stranded below the active rung's floor
     if (!wantAscend) this._resFast = 0;
     if (Math.abs(next - cur) > 0.01) {
@@ -359,6 +440,9 @@ export class QualityGovernor {
       this.renderer.setPixelRatio(next);
       this.renderer.setSize(viewportW, viewportH, false);
       this.onResize?.(viewportW, viewportH);
+      // Do not evaluate costs from the old resolution against the new one.
+      this._resetFrameHistory(now);
+      return;
     }
     // descend: pinned at the floor and still under ~42fps, twice running —
     // or CATASTROPHICALLY slow (~<25fps), where waiting out the resolution
@@ -369,14 +453,15 @@ export class QualityGovernor {
     // >40 ms gate sat just above the vsync-halved 33.3 ms, which is exactly
     // where a GPU-bound machine parks, so the fast path never fired for the
     // hardware that needed it most.
-    const catastrophic = (this._ema > 40 || (slowCadence && this._ema > 30))
+    const catastrophic = sustainedSlow && (this._ema > 40 || (slowCadence && this._ema > 30))
       && this.rung < this.rungs.length - 1;
-    if (catastrophic || (this._ema > 24 && cur <= floor + 0.01 && this.rung < this.rungs.length - 1)) {
+    if (catastrophic || (sustainedSlow && this._ema > 24 && cur <= floor + 0.01 && this.rung < this.rungs.length - 1)) {
       if (catastrophic || ++this._slow >= 2) {
-        this.applyRung(this.rung + 1);
+        const observedMS = this._ema;
+        this.applyRung(this.rung + 1, now);
         this._slow = 0;
         this._movedAt = now;
-        console.info(`[${this.label}] quality rung -> ${this.rung} (frame ${this._ema.toFixed(1)}ms${catastrophic ? ', fast descent' : ''})`);
+        console.info(`[${this.label}] quality rung -> ${this.rung} (frame ${observedMS.toFixed(1)}ms${catastrophic ? ', fast descent' : ''})`);
       }
     } else this._slow = 0;
     // ascend: locked-vsync smooth at full rung resolution, 35s after the
@@ -385,12 +470,12 @@ export class QualityGovernor {
     // rung — 7-8 minutes total — read as too punishing). A failed promotion
     // still descends immediately and re-sits the cooldown, so the worst
     // oscillation is one gentle probe every ~47s.
-    if (headroom && cur >= cap - 0.01 && this.rung > 0 && now - this._movedAt > 35000) {
+    if (stableDelivery && cur >= cap - 0.01 && this.rung > 0 && now - this._movedAt > 35000) {
       if (++this._fast >= 4) {
-        this.applyRung(this.rung - 1);
+        this.applyRung(this.rung - 1, now);
         this._fast = 0;
         this._movedAt = now;
-        console.info(`[${this.label}] quality rung -> ${this.rung} (headroom)`);
+        console.info(`[${this.label}] quality rung -> ${this.rung} (stable-delivery probe)`);
       }
     } else this._fast = 0;
   }

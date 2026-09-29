@@ -83320,6 +83320,7 @@ class WebGPUTimestampQueryPool extends TimestampQueryPool {
 		super( maxQueries );
 		this.device = device;
 		this.type = type;
+		this.queryStartTime = 0;
 
 		_querySetDescriptor$1.label = `queryset_global_timestamp_${type}`;
 		_querySetDescriptor$1.type = 'timestamp';
@@ -83367,6 +83368,7 @@ class WebGPUTimestampQueryPool extends TimestampQueryPool {
 		}
 
 		const baseOffset = this.currentQueryIndex;
+		if ( baseOffset === 0 ) this.queryStartTime = performance.now();
 		this.currentQueryIndex += 2;
 
 		this.queryOffsets.set( uid, baseOffset );
@@ -83437,6 +83439,7 @@ class WebGPUTimestampQueryPool extends TimestampQueryPool {
 			const currentOffsets = new Map( this.queryOffsets );
 			const queryCount = this.currentQueryIndex;
 			const bytesUsed = queryCount * 8;
+			const queryStartTime = this.queryStartTime;
 
 			// Reset state before GPU work
 			this.currentQueryIndex = 0;
@@ -83488,6 +83491,14 @@ class WebGPUTimestampQueryPool extends TimestampQueryPool {
 
 			const times = new BigUint64Array( this.resultBuffer.getMappedRange( 0, bytesUsed ) );
 			const framesDuration = {};
+			const timestamps = new Map();
+			// FTL patch: GPU counters can reset or be unavailable. Validate the
+			// whole batch before publishing any timing. Its CPU envelope starts
+			// at query allocation, NOT resolve(), which may run much later.
+			// Epochs need not agree; only elapsed durations are compared.
+			const wallMS = performance.now() - queryStartTime;
+			const maximumDuration = wallMS * 1.1 + 2;
+			let valid = Number.isFinite( wallMS ) && wallMS >= 0;
 
 			const frames = [];
 
@@ -83508,7 +83519,14 @@ class WebGPUTimestampQueryPool extends TimestampQueryPool {
 				const endTime = times[ baseOffset + 1 ];
 				const duration = Number( endTime - startTime ) / 1e6;
 
-				this.timestamps.set( uid, duration );
+				if ( endTime < startTime || ! Number.isFinite( duration ) || duration > maximumDuration ) {
+
+					valid = false;
+					break;
+
+				}
+
+				timestamps.set( uid, duration );
 
 				framesDuration[ frame ] += duration;
 
@@ -83518,6 +83536,16 @@ class WebGPUTimestampQueryPool extends TimestampQueryPool {
 			const totalDuration = framesDuration[ frames[ frames.length - 1 ] ];
 
 			this.resultBuffer.unmap();
+			// A quantized zero-length pass is legal, but an entirely zero frame
+			// is not useful evidence. Reject impossible summed spans as well.
+			if ( ! valid || frames.length === 0 || frames.some( frame =>
+				! ( framesDuration[ frame ] > 0 && framesDuration[ frame ] <= maximumDuration ) ) ) {
+
+				return this.lastValue;
+
+			}
+
+			for ( const [ uid, duration ] of timestamps ) this.timestamps.set( uid, duration );
 			this.lastValue = totalDuration;
 			this.frames = frames;
 
