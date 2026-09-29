@@ -3,6 +3,7 @@
 // Mechanics layer ported from the first-strike vertical slice (MA5 loop,
 // armor-over-health, movement feel). The sim is untouched and authoritative.
 
+import { createShadowBudget } from '../engine/shadow-budget.js';
 import * as THREE from '../engine/vendor/three.webgpu.module.js';
 import { Sim, fmtTime } from '../sim/sim.js';
 import { FACTION, FLAG } from '../shared/agentBuffer.js';
@@ -286,6 +287,7 @@ torch.shadow.radius = 4; // soft edges on everything the beam throws
 // a long razor umbra with zero fill). Part-lit shadows keep the depth cue
 // without the cardboard-cutout artifact.
 torch.shadow.intensity = 0.62;
+const torchShadows = createShadowBudget(torch);
 
 // Launcher warm-up imports this whole graph from the menu. Code fetch/parse
 // and the launch-independent renderer/environment setup above happen early;
@@ -805,26 +807,11 @@ const governor = new QualityGovernor({
   renderer, rungs: RUNGS, pixelBudget: PIXEL_BUDGET, hd: HD, label: 'charon',
   apply: (R, i) => {
     rung = i;
-    // NOTHING HERE MAY DESTROY A SHADOW RESOURCE. Reported again on the Legion
-    // (Windows/Chrome/Dawn): "Destroyed texture [ShadowDepthTexture] used in a
-    // submit", the same class of crash Firefox died of. Two paths caused it and
-    // both are gone:
-    //   - toggling renderer.shadowMap.enabled across a rung tears shadow
-    //     resources down mid-flight. It is pinned on at boot now; a rung with
-    //     shadows off simply stops the caster, so no shadow pass runs and the
-    //     cost is the same.
-    //   - re-sizing the map orphaned the old render target, and an orphaned
-    //     target IS eventually destroyed — which is exactly what the error
-    //     says. The map size is fixed for the session instead.
-    // Why it only showed up on that machine now: the 240Hz cadence fix
-    // unfroze the ladder. Before it, `locked` was permanently false on a
-    // high-refresh panel and rung changes could not happen at all, so this
-    // latent crash had nothing to trigger it.
-    torch.castShadow = R.shadows;
-    if (R.shadows) {
-      torch.shadow.needsUpdate = true;
-      _shadowAt = performance.now();
-    }
+    // Keep castShadow and map size fixed: cached WebGPU pipelines retain
+    // shadow nodes. Low quality removes shadow influence and update work
+    // without disposing a target that another cached pipeline still uses.
+    torchShadows.setEnabled(R.shadows);
+    if (R.shadows) _shadowAt = performance.now();
     lightPool.setActive(R.lights);
     setTeamSpots(R.teamSpots ?? 3);
     post.setBloomScale(R.bloom);
@@ -918,7 +905,7 @@ governor.prewarm(scene, camera, {
     lite: R.litePost,
     signal,
     beforeRender: () => {
-      if (torch.castShadow) { torch.shadow.needsUpdate = true; _shadowAt = performance.now(); }
+      if (torchShadows.requestUpdate()) _shadowAt = performance.now();
     },
   }),
 });
@@ -4255,7 +4242,7 @@ function frame(now) {
   // so two thirds of those passes re-rendered an identical depth buffer.
   // >= 30 reproduces today's cadence exactly at 60Hz (two vsyncs is 33.3ms).
   // gate on the CASTER, not the renderer flag — the flag is pinned on now
-  if (torch.castShadow && now - _shadowAt >= 30) { _shadowAt = now; torch.shadow.needsUpdate = true; }
+  if (now - _shadowAt >= 30 && torchShadows.requestUpdate()) _shadowAt = now;
   renderer.info.reset(); // per-frame accumulation across all post passes
   // ...and the render itself is guarded: a throw is REPAIRED and reported, and
   // the next frame attempted, rather than taking the session down silently.

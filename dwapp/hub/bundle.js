@@ -68956,6 +68956,29 @@ var init_protocol = __esm({
   }
 });
 
+// engine/shadow-budget.js
+function createShadowBudget(light) {
+  const intensity = light.shadow.intensity;
+  let enabled = true;
+  return {
+    setEnabled(value) {
+      enabled = !!value;
+      light.shadow.autoUpdate = false;
+      light.shadow.intensity = enabled ? intensity : 0;
+      light.shadow.needsUpdate = enabled;
+    },
+    requestUpdate() {
+      if (!enabled) return false;
+      light.shadow.needsUpdate = true;
+      return true;
+    }
+  };
+}
+var init_shadow_budget = __esm({
+  "engine/shadow-budget.js"() {
+  }
+});
+
 // shared/rng.js
 function hashSeed(str) {
   let h2 = 1779033703 ^ str.length;
@@ -96064,10 +96087,7 @@ function frame(now) {
       _fpsWorst *= 0.55;
     }
   }
-  if (torch.castShadow && now - _shadowAt >= 30) {
-    _shadowAt = now;
-    torch.shadow.needsUpdate = true;
-  }
+  if (now - _shadowAt >= 30 && torchShadows.requestUpdate()) _shadowAt = now;
   renderer.info.reset();
   if (_renderStopped) return;
   try {
@@ -96157,9 +96177,10 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _morphed, _gibbed, aggroGlobalAt, _aggroAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, scareState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _morphed, _gibbed, aggroGlobalAt, _aggroAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, scareState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
+    init_shadow_budget();
     init_three_webgpu_module();
     init_sim();
     init_agentBuffer();
@@ -96302,6 +96323,7 @@ var init_main = __esm({
     torch.shadow.bias = -2e-3;
     torch.shadow.radius = 4;
     torch.shadow.intensity = 0.62;
+    torchShadows = createShadowBudget(torch);
     LAUNCH = globalThis.__charonLaunch ?? await new Promise((resolve) => {
       window.addEventListener("charon:launch", (event) => resolve(event.detail), { once: true });
     });
@@ -96565,11 +96587,8 @@ var init_main = __esm({
       label: "charon",
       apply: (R2, i2) => {
         rung = i2;
-        torch.castShadow = R2.shadows;
-        if (R2.shadows) {
-          torch.shadow.needsUpdate = true;
-          _shadowAt = performance.now();
-        }
+        torchShadows.setEnabled(R2.shadows);
+        if (R2.shadows) _shadowAt = performance.now();
         lightPool.setActive(R2.lights);
         setTeamSpots(R2.teamSpots ?? 3);
         post.setBloomScale(R2.bloom);
@@ -96649,10 +96668,7 @@ var init_main = __esm({
         lite: R2.litePost,
         signal,
         beforeRender: () => {
-          if (torch.castShadow) {
-            torch.shadow.needsUpdate = true;
-            _shadowAt = performance.now();
-          }
+          if (torchShadows.requestUpdate()) _shadowAt = performance.now();
         }
       })
     });
