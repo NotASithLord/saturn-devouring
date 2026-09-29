@@ -185,6 +185,8 @@ body[data-input="gamepad"] .hub-button:focus em { color: var(--hub-amber); }
 .hub-page-title { font-size: clamp(44px, 7vw, 82px); line-height: .95; }
 .hub-copy { max-width: 760px; color: #9db0bc; font: 16px/1.75 system-ui, sans-serif; }
 .hub-copy p + p { margin-top: 18px; }
+.hub-copy a { color: #f2c675; text-underline-offset: 3px; }
+.hub-copy a:focus-visible { outline: 2px solid #f2c675; outline-offset: 3px; }
 .hub-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 34px; }
 .hub-card { border: 1px solid var(--hub-line); background: rgba(10,16,23,.72); padding: 22px; min-height: 170px; }
 .hub-card .index { color: var(--hub-red); font-size: 10px; letter-spacing: .14em; }

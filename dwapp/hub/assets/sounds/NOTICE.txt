@@ -1,0 +1,14 @@
+Recorded audio — permission review outstanding
+
+The comments in game/audio.js identify supplied Halo recordings, including
+Flood sounds and marine voice lines. No per-file source-game, acquisition,
+author, or redistribution-permission record accompanies the WAV files.
+
+These recordings are excluded from the project's MIT license. No license for
+them is granted by this notice. Confirm their sources and applicable rights,
+or replace them with recordings cleared for standalone-game distribution.
+
+Microsoft's Game Content Usage Rules discuss audio rights separately:
+https://www.xbox.com/en-us/developers/rules
+The Halo 3 music exception does not establish permission for every sound effect
+or voice recording in this folder.

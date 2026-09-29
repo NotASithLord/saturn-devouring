@@ -144,6 +144,9 @@ const buildTarget = async (t) => {
 
   const outDir = join(OUT, t.name);
   await mkdir(outDir, { recursive: true });
+  for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    await cp(join(ROOT, file), join(outDir, file));
+  }
   if (t.assets) await cp(join(ROOT, t.assets), join(outDir, 'assets'), { recursive: true });
   await build({
     stdin: {
