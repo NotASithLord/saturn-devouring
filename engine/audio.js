@@ -151,7 +151,7 @@ export class PositionalSynth {
       lfo.frequency.value = 1.2;
       lfoG.gain.value = 90;
       lfo.connect(lfoG).connect(osc.frequency);
-      g.gain.value = 0.028;
+      g.gain.value = 0.021;
       osc.connect(g).connect(this.master);
       osc.start(); lfo.start();
       this.alarmNodes = { osc, lfo, g };

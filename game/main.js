@@ -1,3 +1,4 @@
+import { createGuardAlarm } from './guard-alarm.js';
 import { roomTransmission } from './acoustics.js';
 // HALO CHARON — 3D slice (docs/ROADMAP-3D.md): an ODST with a fireteam,
 // dropped into the ship while the FULL simulation plays out around them.
@@ -317,6 +318,7 @@ installDeviceLostReload(renderer, {
 const coopPlayers = LAUNCH.session ? Math.max(1, new Set(LAUNCH.members || []).size) : 1;
 const PLAYER_SPAWN_ID = 'cic';
 const sim = new Sim(seed, null, { playerCount: coopPlayers, playerSpawnId: PLAYER_SPAWN_ID });
+const guardAlarm = createGuardAlarm(sim);
 const briefing = activeIntroCrawl() ?? beginIntroCrawl();
 briefing.setBody(introBody(sim.graph.node(sim.graph.breachNode).name));
 const world = new World(scene, sim.graph, seed);
@@ -3800,7 +3802,7 @@ function frame(now) {
   }
   audio.setListener(renderViewX, renderViewZ,
     deathFocusAgent ? Math.atan2(-Math.cos(deathFocusAgent.heading), -Math.sin(deathFocusAgent.heading)) : player.yaw, deathFocusAgent?.deck ?? player.deck);
-  audio.alarm(sim.lastStand && !ended);
+  audio.alarm(guardAlarm() && !ended);
   if (sim.lastStand && !window._paLastStand) { window._paLastStand = true; audio.play('pa', null, 0.6); }
   audio.startAmbience(); // no-op until the AudioContext exists (first click)
   audio.ambienceTick();

@@ -68971,6 +68971,113 @@ var init_protocol = __esm({
   }
 });
 
+// shared/agentBuffer.js
+var FACTION, FLAG, CLIP, AgentBuffer;
+var init_agentBuffer = __esm({
+  "shared/agentBuffer.js"() {
+    FACTION = {
+      CIVILIAN: 0,
+      ARMED: 1,
+      MARINE: 2,
+      INFECTION: 3,
+      COMBAT: 4,
+      CARRIER: 5,
+      CORPSE: 6
+    };
+    FLAG = {
+      HAS_RADIO: 1 << 0,
+      FLINCH: 1 << 12,
+      // just-hurt: renderers jerk the body
+      HELPLESS: 1 << 1,
+      REANIMATABLE: 1 << 2,
+      DOWNED: 1 << 3,
+      PANICKED: 1 << 4,
+      EXPOSED: 1 << 5,
+      // infection form currently transiting a vent
+      AMBUSH: 1 << 6,
+      // stationary in a shaft ambush corner
+      BURNED: 1 << 7,
+      // damage >= 100 (permanently out of the economy)
+      FLAMER: 1 << 8,
+      // carries the ship's one flamethrower
+      IN_SHAFT: 1 << 9,
+      ARMED_HOST: 1 << 10,
+      // combat form whose host carried a weapon (render with gun)
+      CHARGING: 1 << 11,
+      // combat form in a lunge/charge burst (render sprint)
+      LEAPING: 1 << 13,
+      // flood form airborne mid-arc — a combat form's long charge
+      // OR an infection form's 2 m pounce (render lifted off the floor)
+      ODST: 1 << 14,
+      // armory-reserve ODST (render in black plate)
+      // TRIGGER DOWN ON THE FLAMETHROWER this instant. FLAMER says a man carries
+      // the thing; this says fuel is leaving the nozzle right now, which is the
+      // only moment there is a jet to draw. Paired with graph.burnX/burnY, which
+      // say where that fuel is landing.
+      FLAMING: 1 << 15,
+      // PURPOSEFUL MOTION this tick: a committed move leg or an airborne arc.
+      // The motion tracker keys off this, NOT raw position deltas — separation
+      // shuffles and park-drift used to paint dead-still ambushers as moving
+      // blips (user: "motion detector should only detect motion, not standing
+      // flood bodies"), which is exactly the layered bait tactic this enables.
+      MOVING: 1 << 16,
+      // HALO-3 CONVERSION (user): the renderer plays the turn off these two.
+      BURROWING: 1 << 17,
+      // infection form seated on a corpse, digging in
+      THRASHING: 1 << 18,
+      // corpse convulsing — the pod is inside; it rises soon
+      MALE_PLAYER: 1 << 19,
+      // player-selected male ODST uses the helmeted marine rig
+      ARMS_HIGH: 1 << 20
+      // this combat-form charge uses the Halo CE wide-Y rush
+    };
+    CLIP = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, DEATH: 4, WRITHE: 5 };
+    AgentBuffer = class {
+      constructor(capacity = 512) {
+        this.capacity = capacity;
+        this.count = 0;
+        this.id = new Int32Array(capacity);
+        this.faction = new Uint8Array(capacity);
+        this.state = new Uint8Array(capacity);
+        this.nodeId = new Int16Array(capacity);
+        this.posX = new Float32Array(capacity);
+        this.posY = new Float32Array(capacity);
+        this.posZ = new Float32Array(capacity);
+        this.hoverY = new Float32Array(capacity);
+        this.prevX = new Float32Array(capacity);
+        this.prevY = new Float32Array(capacity);
+        this.prevZ = new Float32Array(capacity);
+        this.headingR = new Float32Array(capacity);
+        this.animClip = new Uint8Array(capacity);
+        this.animTime = new Float32Array(capacity);
+        this.integrity = new Float32Array(capacity);
+        this.damage = new Float32Array(capacity);
+        this.tint = new Uint32Array(capacity);
+        this.flags = new Uint32Array(capacity);
+      }
+      beginTick() {
+        this.prevX.set(this.posX);
+        this.prevY.set(this.posY);
+        this.prevZ.set(this.posZ);
+      }
+    };
+  }
+});
+
+// game/guard-alarm.js
+function createGuardAlarm(sim2) {
+  const guards = sim2.agents.filter((a2) => a2.garrison && a2.deck === 1 && a2.faction === FACTION.MARINE).map((a2) => a2.id);
+  return () => guards.length > 0 && guards.every((id) => {
+    const a2 = sim2.byId.get(id);
+    return !a2 || a2.dead || a2.hp <= 0 || a2.faction !== FACTION.MARINE;
+  });
+}
+var init_guard_alarm = __esm({
+  "game/guard-alarm.js"() {
+    init_agentBuffer();
+  }
+});
+
 // game/acoustics.js
 function roomTransmission(graph, from, to) {
   if (from === to && from >= 0) return { gain: 1, cutoff: 2e4 };
@@ -69863,99 +69970,6 @@ var init_params = __esm({
         subDt: 8333333e-9,
         maxSubSteps: 8,
         dtCap: 0.05
-      }
-    };
-  }
-});
-
-// shared/agentBuffer.js
-var FACTION, FLAG, CLIP, AgentBuffer;
-var init_agentBuffer = __esm({
-  "shared/agentBuffer.js"() {
-    FACTION = {
-      CIVILIAN: 0,
-      ARMED: 1,
-      MARINE: 2,
-      INFECTION: 3,
-      COMBAT: 4,
-      CARRIER: 5,
-      CORPSE: 6
-    };
-    FLAG = {
-      HAS_RADIO: 1 << 0,
-      FLINCH: 1 << 12,
-      // just-hurt: renderers jerk the body
-      HELPLESS: 1 << 1,
-      REANIMATABLE: 1 << 2,
-      DOWNED: 1 << 3,
-      PANICKED: 1 << 4,
-      EXPOSED: 1 << 5,
-      // infection form currently transiting a vent
-      AMBUSH: 1 << 6,
-      // stationary in a shaft ambush corner
-      BURNED: 1 << 7,
-      // damage >= 100 (permanently out of the economy)
-      FLAMER: 1 << 8,
-      // carries the ship's one flamethrower
-      IN_SHAFT: 1 << 9,
-      ARMED_HOST: 1 << 10,
-      // combat form whose host carried a weapon (render with gun)
-      CHARGING: 1 << 11,
-      // combat form in a lunge/charge burst (render sprint)
-      LEAPING: 1 << 13,
-      // flood form airborne mid-arc — a combat form's long charge
-      // OR an infection form's 2 m pounce (render lifted off the floor)
-      ODST: 1 << 14,
-      // armory-reserve ODST (render in black plate)
-      // TRIGGER DOWN ON THE FLAMETHROWER this instant. FLAMER says a man carries
-      // the thing; this says fuel is leaving the nozzle right now, which is the
-      // only moment there is a jet to draw. Paired with graph.burnX/burnY, which
-      // say where that fuel is landing.
-      FLAMING: 1 << 15,
-      // PURPOSEFUL MOTION this tick: a committed move leg or an airborne arc.
-      // The motion tracker keys off this, NOT raw position deltas — separation
-      // shuffles and park-drift used to paint dead-still ambushers as moving
-      // blips (user: "motion detector should only detect motion, not standing
-      // flood bodies"), which is exactly the layered bait tactic this enables.
-      MOVING: 1 << 16,
-      // HALO-3 CONVERSION (user): the renderer plays the turn off these two.
-      BURROWING: 1 << 17,
-      // infection form seated on a corpse, digging in
-      THRASHING: 1 << 18,
-      // corpse convulsing — the pod is inside; it rises soon
-      MALE_PLAYER: 1 << 19,
-      // player-selected male ODST uses the helmeted marine rig
-      ARMS_HIGH: 1 << 20
-      // this combat-form charge uses the Halo CE wide-Y rush
-    };
-    CLIP = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, DEATH: 4, WRITHE: 5 };
-    AgentBuffer = class {
-      constructor(capacity = 512) {
-        this.capacity = capacity;
-        this.count = 0;
-        this.id = new Int32Array(capacity);
-        this.faction = new Uint8Array(capacity);
-        this.state = new Uint8Array(capacity);
-        this.nodeId = new Int16Array(capacity);
-        this.posX = new Float32Array(capacity);
-        this.posY = new Float32Array(capacity);
-        this.posZ = new Float32Array(capacity);
-        this.hoverY = new Float32Array(capacity);
-        this.prevX = new Float32Array(capacity);
-        this.prevY = new Float32Array(capacity);
-        this.prevZ = new Float32Array(capacity);
-        this.headingR = new Float32Array(capacity);
-        this.animClip = new Uint8Array(capacity);
-        this.animTime = new Float32Array(capacity);
-        this.integrity = new Float32Array(capacity);
-        this.damage = new Float32Array(capacity);
-        this.tint = new Uint32Array(capacity);
-        this.flags = new Uint32Array(capacity);
-      }
-      beginTick() {
-        this.prevX.set(this.posX);
-        this.prevY.set(this.posY);
-        this.prevZ.set(this.posZ);
       }
     };
   }
@@ -85460,7 +85474,7 @@ var init_audio = __esm({
           lfo.frequency.value = 1.2;
           lfoG.gain.value = 90;
           lfo.connect(lfoG).connect(osc.frequency);
-          g2.gain.value = 0.028;
+          g2.gain.value = 0.021;
           osc.connect(g2).connect(this.master);
           osc.start();
           lfo.start();
@@ -95972,7 +95986,7 @@ function frame(now) {
     deathFocusAgent ? Math.atan2(-Math.cos(deathFocusAgent.heading), -Math.sin(deathFocusAgent.heading)) : player.yaw,
     deathFocusAgent?.deck ?? player.deck
   );
-  audio.alarm(sim.lastStand && !ended);
+  audio.alarm(guardAlarm() && !ended);
   if (sim.lastStand && !window._paLastStand) {
     window._paLastStand = true;
     audio.play("pa", null, 0.6);
@@ -96327,9 +96341,10 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, frameTiming, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, guardAlarm, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, frameTiming, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
+    init_guard_alarm();
     init_acoustics();
     init_shadow_budget();
     init_three_webgpu_module();
@@ -96489,6 +96504,7 @@ var init_main = __esm({
     coopPlayers = LAUNCH.session ? Math.max(1, new Set(LAUNCH.members || []).size) : 1;
     PLAYER_SPAWN_ID = "cic";
     sim = new Sim(seed, null, { playerCount: coopPlayers, playerSpawnId: PLAYER_SPAWN_ID });
+    guardAlarm = createGuardAlarm(sim);
     briefing = activeIntroCrawl() ?? beginIntroCrawl();
     briefing.setBody(introBody(sim.graph.node(sim.graph.breachNode).name));
     world = new World(scene, sim.graph, seed);

@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import { Sim } from '../sim/sim.js';
+import { FACTION } from '../shared/agentBuffer.js';
+import { createGuardAlarm } from './guard-alarm.js';
+
+const sim = new Sim('guard-alarm');
+const guards = sim.agents.filter((a) => a.garrison && a.deck === 1 && a.faction === FACTION.MARINE);
+assert.ok(guards.length > 1, 'real spawn contains the Deck 1 guard roster');
+const alarm = createGuardAlarm(sim);
+assert.equal(alarm(), false);
+for (const a of sim.agents) if (!guards.includes(a) && a.faction === FACTION.MARINE) a.dead = true;
+sim.lastStand = true;
+assert.equal(alarm(), false, 'line casualties and last stand do not trigger the alarm');
+for (const a of guards.slice(1)) a.dead = true;
+guards[0].deck = 2;
+assert.equal(alarm(), false, 'one surviving guard keeps alarm off even after moving decks');
+guards[0].hp = 0;
+assert.equal(alarm(), true, 'final guard killed triggers the alarm');
+guards[0].hp = 100; guards[0].faction = FACTION.COMBAT;
+assert.equal(alarm(), true, 'reanimation does not count as a surviving guard');
+sim.byId.delete(guards[0].id);
+assert.equal(alarm(), true, 'removed body does not silence the alarm');
+assert.equal(createGuardAlarm({agents: [], byId: new Map()})(), false, 'empty roster does not trigger alarm');
+console.log('guard alarm: original Deck 1 guards, last survivor, movement, reanimation and empty roster ✓');
