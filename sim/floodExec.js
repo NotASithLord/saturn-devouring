@@ -205,6 +205,17 @@ export function updateFloodTick(sim, dt) {
       case TASK.MOVE:
       case TASK.SCOUT:
       case TASK.GUARD:
+        // A seed is a production order, not a permanent sentry. Finish the
+        // trip by rooting; if the route stalls, use safe ground after 30s.
+        if (t.seed) {
+          t.seedSince ??= sim.t;
+          if (a.faction !== FACTION.COMBAT || a.fromPlayer) { a.task = null; break; }
+          if (!a.move && (a.node === t.node || sim.t - t.seedSince >= 30)) {
+            if (hive.localThreat(a.node) < 0.5) hive.assign(a, { kind: TASK.TRANSFORM });
+            else { a.task = null; a.path = []; } // unsafe den: let the planner choose again
+            break;
+          }
+        }
         moveToward(sim, a, t.node, t.kind === TASK.SCOUT && t.sweep
           && a.faction === FACTION.COMBAT
           ? (from, to) => hive.searchPath(from, to)

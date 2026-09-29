@@ -68948,7 +68948,7 @@ function validGamePacket(packet) {
 var PROTOCOL_VERSION, MAX_PLAYERS, QUICKPLAY_ROOM, ROOM_PREFIX, SAFE_CODE, PUBLIC_LOBBY, GAME_KINDS, bytesToHex, hexToBytes;
 var init_protocol = __esm({
   "multiplayer/protocol.js"() {
-    PROTOCOL_VERSION = 19;
+    PROTOCOL_VERSION = 20;
     MAX_PLAYERS = 4;
     QUICKPLAY_ROOM = `charon:quickplay:v${PROTOCOL_VERSION}`;
     ROOM_PREFIX = `charon:v${PROTOCOL_VERSION}:`;
@@ -73856,7 +73856,7 @@ var init_hive = __esm({
           wantK = Math.max(wantK, bodyBackedK);
         }
         if (seedingK === 0 && plannedK < wantK && (C2 > K2 || K2 === 0)) {
-          const spares = combat.filter((c2) => !c2.fromPlayer && !c2.downed && c2.hp > 0 && !this.isCombatCommitted(c2) && (!c2.task || c2.task.kind === TASK.GUARD && c2.task.muster === void 0 || c2.task.kind === TASK.ATTACK || c2.task.kind === TASK.SCOUT));
+          const spares = combat.filter((c2) => !c2.fromPlayer && !c2.downed && c2.hp > 0 && !this.isCombatCommitted(c2) && (!c2.task || c2.task.kind === TASK.GUARD && (c2.task.muster === void 0 || I2 === 0 && K2 === 0) || c2.task.kind === TASK.MOVE || c2.task.kind === TASK.ATTACK || c2.task.kind === TASK.SCOUT));
           const localSeed = spares.filter((c2) => !c2.move && this.localThreat(c2.node) < 0.5).sort((a2, b2) => this.localThreat(a2.node) - this.localThreat(b2.node) || a2.id - b2.id)[0];
           if (localSeed) this.assign(localSeed, { kind: TASK.TRANSFORM });
           else {
@@ -74132,14 +74132,16 @@ var init_hive = __esm({
         }
         this.trySquadWipe(infection, combat, carriers, I2);
         for (const c2 of combat) {
+          const t2 = c2.task;
+          if (t2?.kind === TASK.GUARD && !c2.move && c2.node === t2.node && !t2.seed && !t2.retreat && t2.muster === void 0 && t2.screen === void 0 && t2.protect === void 0) c2.task = null;
           if (c2.task) continue;
           const prey = this._desperate ? -1 : this.nearestHuntNode(c2.node);
-          if (prey !== -1) {
+          if (prey !== -1 && (prey !== c2.node || sim2.humansAt(c2.pnode ?? c2.node) > 0)) {
             this.assign(c2, { kind: TASK.ATTACK, node: prey });
             continue;
           }
-          const home = carriers.length ? carriers[c2.id % carriers.length].node : this.carrierSite;
-          if (home !== -1 && c2.node !== home) this.assign(c2, { kind: TASK.GUARD, node: this.scatterNode(home, c2.id, "big") });
+          const sweep = this.sweepTarget(c2, coverageTargets, "combat");
+          if (sweep !== -1) this.assign(c2, { kind: TASK.SCOUT, node: sweep, sweep: true });
         }
       }
       // score grab candidates per §13.3; returns a task or null.
@@ -74665,6 +74667,21 @@ function updateFloodTick(sim2, dt) {
       case TASK.MOVE:
       case TASK.SCOUT:
       case TASK.GUARD:
+        if (t2.seed) {
+          t2.seedSince ??= sim2.t;
+          if (a2.faction !== FACTION.COMBAT || a2.fromPlayer) {
+            a2.task = null;
+            break;
+          }
+          if (!a2.move && (a2.node === t2.node || sim2.t - t2.seedSince >= 30)) {
+            if (hive.localThreat(a2.node) < 0.5) hive.assign(a2, { kind: TASK.TRANSFORM });
+            else {
+              a2.task = null;
+              a2.path = [];
+            }
+            break;
+          }
+        }
         moveToward(sim2, a2, t2.node, t2.kind === TASK.SCOUT && t2.sweep && a2.faction === FACTION.COMBAT ? (from, to) => hive.searchPath(from, to) : null);
         if (a2.node === t2.node && !a2.move && (t2.kind === TASK.MOVE || t2.kind === TASK.SCOUT)) a2.task = null;
         break;

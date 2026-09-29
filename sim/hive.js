@@ -1779,13 +1779,14 @@ export class Hive {
     }
     if (seedingK === 0 && plannedK < wantK && (C > K || K === 0)) {
       // a form raised from the PLAYER never roots into a carrier (game rule);
-      // a form staged in a LIVE MUSTER is off-limits too — drafting the army
-      // it is trying to raise put the hive in a loop of eating its own
-      // soldiers (raise the dead → draft to carrier → rupture → raise…).
+      // a form staged in a LIVE MUSTER is normally off-limits too: drafting
+      // the army repeatedly would eat its own soldiers. The exception is a
+      // completely empty production line: reserve one seed to restart it.
       const spares = combat.filter((c) => !c.fromPlayer && !c.downed && c.hp > 0
         && !this.isCombatCommitted(c)
-        && (!c.task || (c.task.kind === TASK.GUARD && c.task.muster === undefined)
-          || c.task.kind === TASK.ATTACK || c.task.kind === TASK.SCOUT));
+        && (!c.task || (c.task.kind === TASK.GUARD
+          && (c.task.muster === undefined || (I === 0 && K === 0)))
+          || c.task.kind === TASK.MOVE || c.task.kind === TASK.ATTACK || c.task.kind === TASK.SCOUT));
       // A safe isolated form is already a viable carrier site. Root it in
       // place before asking it to cross the ship: this closes the failure mode
       // where the last combat form keeps walking toward an ideal den and dies
@@ -2248,13 +2249,24 @@ export class Hive {
     // walk into marines, so a form only goes loud where its own surroundings
     // are safe, whatever the global pool is doing elsewhere.
     for (const c of combat) {
+      // Plain guard orders were also used as idle parking. Once arrived,
+      // release them for real work; retain live production/defense orders.
+      const t = c.task;
+      if (t?.kind === TASK.GUARD && !c.move && c.node === t.node
+        && !t.seed && !t.retreat && t.muster === undefined
+        && t.screen === undefined && t.protect === undefined) c.task = null;
       if (c.task) continue;
       // when desperate the survivors rebuild and hide (handled in 2b) — they
       // don't go hunting into the guns
       const prey = this._desperate ? -1 : this.nearestHuntNode(c.node);
-      if (prey !== -1) { this.assign(c, { kind: TASK.ATTACK, node: prey }); continue; }
-      const home = carriers.length ? carriers[c.id % carriers.length].node : this.carrierSite;
-      if (home !== -1 && c.node !== home) this.assign(c, { kind: TASK.GUARD, node: this.scatterNode(home, c.id, 'big') });
+      if (prey !== -1 && (prey !== c.node || sim.humansAt(c.pnode ?? c.node) > 0)) {
+        this.assign(c, { kind: TASK.ATTACK, node: prey }); continue;
+      }
+      // With no reachable prey, search the live topology instead of parking
+      // at an obsolete carrier site. Dedicated carrier guards were assigned
+      // above; a surplus fighter must keep gathering information.
+      const sweep = this.sweepTarget(c, coverageTargets, 'combat');
+      if (sweep !== -1) this.assign(c, { kind: TASK.SCOUT, node: sweep, sweep: true });
     }
   }
 

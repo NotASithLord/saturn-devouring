@@ -14,7 +14,7 @@
     "tactics": "node sim/combat-tactics-check.mjs",
     "charge-pose": "node sim/charge-pose-check.mjs",
     "armory-release": "node sim/armory-release-check.mjs",
-    "carrier-defense": "node sim/carrier-defense-check.mjs",
+    "carrier-defense": "node sim/carrier-defense-check.mjs && node sim/swarm-recovery-check.mjs",
     "radar": "node sim/marine-radar-check.mjs",
     "respawn": "node sim/player-respawn-check.mjs",
     "supplies": "node sim/supply-check.mjs",
