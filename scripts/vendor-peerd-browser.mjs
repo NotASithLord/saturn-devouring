@@ -20,6 +20,7 @@ await build({
   stdin: {
     contents: [
       "export { generateIdentity } from './peerd-distributed/identity/keypair.js';",
+      "export { createBufferedChannel } from './peerd-distributed/transport/channel.js';",
       "export { DEFAULT_ICE_SERVERS } from './peerd-distributed/transport/peer.js';",
       "export { joinRoom } from './peerd-distributed/transport/rooms.js';",
       "export { createGossip } from './peerd-distributed/gossip/topic.js';",

@@ -3,9 +3,8 @@
   "name": "charon",
   "main": "worker.js",
   "compatibility_date": "2026-08-26",
-  "secrets": {
-    "required": ["TURN_KEY_ID", "TURN_KEY_TOKEN"]
-  },
+  // Optional TURN fallback: set TURN_KEY_ID and TURN_KEY_TOKEN to enable it.
+  // Direct WebRTC uses the built-in STUN servers without these secrets.
   // Serve the BUILT site, not the repo. Pointing this at "." shipped ~60 raw ES
   // modules with every comment and blank line in them; `npm run build:site`
   // bundles and minifies the game's graph into dist/site and mirrors everything

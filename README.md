@@ -68,6 +68,18 @@ the browser jitter buffer; only bounded SDP/ICE signaling uses direct messages.
 
 See [docs/NETWORKING.md](docs/NETWORKING.md) for the protocol and threat model.
 
+### Direct connections and optional TURN fallback
+
+Game data and voice start with direct WebRTC (host, IPv6 and public STUN).
+TURN credentials are requested only when a connection fails or has not connected
+within five seconds. A single ICE restart then adds TURN while retaining direct
+candidates; successful direct connections never request TURN credentials.
+
+Set the optional Cloudflare Worker secrets `TURN_KEY_ID` and `TURN_KEY_TOKEN`
+to enable relay fallback. The master key stays on the Worker; browsers receive
+short-lived credentials. Without the secrets, direct connections still work,
+but peers behind incompatible NATs or restrictive firewalls may not connect.
+
 ## peerd hub package
 
 ```sh

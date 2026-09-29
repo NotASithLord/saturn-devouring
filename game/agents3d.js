@@ -1716,7 +1716,7 @@ export class Agents3D {
         const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
         let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
         const ey = elevOf(sr.deck) + 1.3;
-        let ty = elevOf(tr.deck) + 0.7;
+        let ty = elevOf(tr.deck) + 0.7 + (tr.hoverY || 0);
         const range = Math.hypot(tx - sx, tz - sz);
         // PER-SHOT SPREAD (user: every tracer from every marine converged on
         // the exact same point) — deterministic jitter around the target,
@@ -1778,8 +1778,8 @@ export class Agents3D {
       if (!sr || !tr) continue;
       const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
       let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
-      const ey = elevOf(sr.deck) + 1.05;
-      let ty = elevOf(tr.deck) + 0.9;
+      const ey = elevOf(sr.deck) + 1.05 + (sr.hoverY || 0);
+      let ty = elevOf(tr.deck) + 0.9 + (tr.hoverY || 0);
       // a host's weapon fired one-handed sprays WIDE (lore: suppressive
       // noise, not marksmanship) — big visible scatter
       const fdx = tx - sx, fdz = tz - sz;

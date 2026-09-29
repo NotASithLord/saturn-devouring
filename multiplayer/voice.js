@@ -1,3 +1,5 @@
+import { createIceFallback } from './ice-fallback.js';
+
 // Charon's standalone page uses the same audited native-media primitive as the
 // peerd App parent. The dwapp path still keeps SDP, ICE, and MediaStreams on the
 // trusted side of the bridge.
@@ -63,6 +65,7 @@ export function createRoomVoice({
   sendSignal,
   onState = () => {},
   iceServers = DEFAULT_ICE_SERVERS,
+  getRelayIceServers,
   RTCPeerConnection: PeerConnection = globalThis.RTCPeerConnection,
   mediaDevices = globalThis.navigator?.mediaDevices,
   createAudio = () => document.createElement('audio'),
@@ -100,6 +103,8 @@ export function createRoomVoice({
     const record = connections.get(peer);
     if (!record) return;
     connections.delete(peer);
+    record.fallback?.stop();
+    clearTimeout(record.connectTimer);
     const timer = disconnectTimers.get(peer);
     if (timer) clearTimeout(timer);
     disconnectTimers.delete(peer);
@@ -161,6 +166,22 @@ export function createRoomVoice({
     }
     const record = { pc, audio, remoteSession, pendingIce: [] };
     connections.set(peer, record);
+    record.fallback = createIceFallback({ pc, getRelayIceServers,
+      restart: async () => {
+        if (selfDid >= peer || connections.get(peer) !== record) return;
+        const offer = await pc.createOffer({ iceRestart: true });
+        if (connections.get(peer) !== record) return;
+        await pc.setLocalDescription(offer);
+        if (connections.get(peer) !== record) return;
+        await send(peer, {
+          __peerdMedia: MEDIA_MARKER, scope, kind: 'offer', session: localSession,
+          replyTo: remoteSession, sdp: pc.localDescription.sdp, relayFallback: true,
+        });
+      },
+    });
+    record.connectTimer = setTimeout(() => {
+      if (connections.get(peer) === record && pc.connectionState !== 'connected') closePeer(peer);
+    }, 15_000);
     pc.onicecandidate = (event) => {
       const candidate = event.candidate;
       if (!candidate || connections.get(peer) !== record) return;
@@ -188,6 +209,9 @@ export function createRoomVoice({
     pc.onconnectionstatechange = () => {
       if (connections.get(peer) !== record) return;
       if (pc.connectionState === 'connected') {
+        record.wasConnected = true;
+        record.fallback.stop();
+        clearTimeout(record.connectTimer);
         const timer = disconnectTimers.get(peer);
         if (timer) clearTimeout(timer);
         disconnectTimers.delete(peer);
@@ -201,8 +225,9 @@ export function createRoomVoice({
           }
         }, 3_000));
       } else if (pc.connectionState === 'failed') {
-        closePeer(peer);
-        sendReady(peer, false);
+        if (record.wasConnected) { closePeer(peer); sendReady(peer, false); return; }
+        if (selfDid < peer) void record.fallback.tryFallback();
+        // The answering peer waits for the caller's ICE restart.
       }
     };
     report();
@@ -223,6 +248,7 @@ export function createRoomVoice({
       __peerdMedia: MEDIA_MARKER, scope, kind: 'offer', session: localSession,
       replyTo: remoteSession, sdp: record.pc.localDescription.sdp,
     });
+    record.fallback.start();
   };
 
   const flushIce = async (record) => {
@@ -255,7 +281,14 @@ export function createRoomVoice({
       const previous = remoteSessions.get(from);
       if (previous && previous !== data.session) closePeer(from);
       remoteSessions.set(from, data.session);
-      const record = makePeer(from, data.session);
+      let record = connections.get(from);
+      if (data.relayFallback === true) {
+        // A fallback offer must follow a real direct attempt in this session.
+        if (!record || record.remoteSession !== data.session || record.fallbackOfferSeen) return true;
+        record.fallbackOfferSeen = true;
+        try { await record.fallback.enable(); } catch { /* direct paths remain available */ }
+        if (connections.get(from) !== record) return true;
+      } else record = makePeer(from, data.session);
       if (!record) return true;
       const early = earlyIce.get(from);
       if (early?.session === data.session) record.pendingIce.push(...early.candidates);

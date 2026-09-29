@@ -9,7 +9,7 @@
 import * as THREE from '../engine/vendor/three.webgpu.module.js';
 import { InstancedEmissiveFixtures } from '../engine/lights.js';
 import { RNG } from '../shared/rng.js';
-import { DECK_H, CLEAR_H, elevOf, clearHeightOf, floorBandOf } from '../shared/geometry.js';
+import { DECK_H, CLEAR_H, elevOf, clearHeightOf, floorBandOf, stairWellDims, switchbackElev } from '../shared/geometry.js';
 
 // Deck stacking + per-room clear height live in shared/geometry.js so the
 // render and the deterministic sim (leap peak) read ONE source. Re-exported
@@ -1121,20 +1121,17 @@ export class World {
     const hiElev = elevOf(n.deck);       // entry floor (this deck)
     const loElev = elevOf(n.deck + 1);   // bottom = the deck below (hangar)
     const midElev = (hiElev + loElev) / 2;
-    // the well sits a little AFT of centre so the fore corridor doorway stays
-    // clear; two flights split left/right of wellCx (the switchback spine)
-    const wellCx = cx + hx * 0.12, wellCz = cz;
-    const wellHx = Math.min(6.5, hx * 0.42), wellHz = Math.min(6, hz * 0.34);
-    return { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz };
+    // the well dims live in shared/geometry.js — ONE source, shared with the
+    // sim's walked traversal (sim.js _stairWaypoints) and the harness view
+    const { ox, wellHx, wellHz, landD } = stairWellDims(hx, hz);
+    const wellCx = cx + ox, wellCz = cz;
+    return { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz, landD };
   }
 
   // where in the switchback a well-point sits (or null if outside the well)
   _switchbackY(g, wx, wz) {
-    if (wx < g.wellCx - g.wellHx || wx > g.wellCx + g.wellHx
-      || wz < g.wellCz - g.wellHz || wz > g.wellCz + g.wellHz) return null;
-    const t = (wz - (g.wellCz - g.wellHz)) / (2 * g.wellHz); // 0 at -Z front, 1 at +Z back
-    if (wx < g.wellCx) return g.hiElev - (g.hiElev - g.midElev) * t;  // flight A: top->mid
-    return g.loElev + (g.midElev - g.loElev) * t;                     // flight B: mid->bottom
+    return switchbackElev(g.hiElev, g.loElev, g.wellHx, g.wellHz, g.landD,
+      wx - g.wellCx, wz - g.wellCz);
   }
 
   // floor elevation under a world point — the deck floor normally; in a
@@ -1185,7 +1182,10 @@ export class World {
   _buildStairRoom(n) {
     const g = this._stairGeom(n);
     (this.stairRooms ??= []).push({ deck: n.deck, node: n.idx, ...g });
-    const { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz } = g;
+    const { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz, landD } = g;
+    // both flights run the FORE (2*wellHz - landD) of the well; the aft landD
+    // band is the flat mid landing (widened per user: a real platform)
+    const runZ = 2 * wellHz - landD;
     // REAL TEXTURES, CHEAPLY (user: the staircase read as untextured flats):
     // treads/landing/spine share the deck-plate material (tinted), with the
     // plate texture scaled onto each box via the same UV helper the floors
@@ -1207,9 +1207,9 @@ export class World {
     // drops mid->bottom back-to-front, so you turn 180 on the landing.
     const steps = 9;
     const mkFlight = (xLo, xHi, yStart, yEnd, frontToBack) => {
-      const dz = (2 * wellHz) / steps, dy = (yStart - yEnd) / steps;
+      const dz = runZ / steps, dy = (yStart - yEnd) / steps;
       for (let i = 0; i < steps; i++) {
-        const zc = frontToBack ? (wellCz - wellHz) + (i + 0.5) * dz : (wellCz + wellHz) - (i + 0.5) * dz;
+        const zc = frontToBack ? (wellCz - wellHz) + (i + 0.5) * dz : (wellCz + wellHz - landD) - (i + 0.5) * dz;
         const yc = yStart - (i + 0.5) * dy;
         const tread = new THREE.Mesh(
           this._scaleFloorUV(new THREE.BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03), matStep);
@@ -1219,18 +1219,21 @@ export class World {
     };
     mkFlight(wellCx - wellHx, wellCx, hiElev, midElev, true);   // flight A (left)
     mkFlight(wellCx, wellCx + wellHx, midElev, loElev, false);  // flight B (right)
-    // mid landing (at the back, both halves)
+    // mid landing (at the back, both halves) — the full landD band, so the
+    // 180° turn happens on real flat floor, matching switchbackElev
     const land = new THREE.Mesh(
-      this._scaleFloorUV(new THREE.BoxGeometry(2 * wellHx, 0.14, 2.0), 2 * wellHx, 2.0), matStep);
-    land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - 1.0);
+      this._scaleFloorUV(new THREE.BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD), matStep);
+    land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - landD / 2);
     this.scene.add(land);
     // switchback spine wall between the two flights, with a bright cap rail —
-    // the spine is a WALL: it wears the wall plating like every other wall
-    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.14, hiElev - loElev, 2 * wellHz - 2.2), this._matWall);
-    spine.position.set(wellCx, (hiElev + loElev) / 2, wellCz - 1.0);
+    // the spine is a WALL: it wears the wall plating like every other wall.
+    // It stops at the landing's leading edge so the platform stays open.
+    const spineD = runZ - 0.2;
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.14, hiElev - loElev, spineD), this._matWall);
+    spine.position.set(wellCx, (hiElev + loElev) / 2, wellCz - landD / 2);
     this.scene.add(spine); this.wallMeshes.push(spine);
-    const spineCap = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.07, 2 * wellHz - 2.2), matRail);
-    spineCap.position.set(wellCx, hiElev + 0.04, wellCz - 1.0);
+    const spineCap = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.07, spineD), matRail);
+    spineCap.position.set(wellCx, hiElev + 0.04, wellCz - landD / 2);
     this.scene.add(spineCap);
 
     // GUARD SYSTEM (user: the old railings floated and looked like crap).
@@ -1290,24 +1293,24 @@ export class World {
         guard(xEdge, (yLo + yHi) / 2, (z0 + z1) / 2, T, yHi - yLo, z1 - z0);
       }
     };
-    const tOf = (z) => (z - (wellCz - wellHz)) / (2 * wellHz);
-    stepGuard(wellCx - wellHx + T / 2, (z) => hiElev - (hiElev - midElev) * tOf(z)); // flight A outer
-    stepGuard(wellCx + wellHx - T / 2, (z) => loElev + (midElev - loElev) * tOf(z)); // flight B outer
+    // the outer balustrades follow the REAL floor line (flat over the landing)
+    stepGuard(wellCx - wellHx + T / 2, (z) => this._switchbackY(g, wellCx - wellHx + 0.1, z) ?? midElev); // flight A outer
+    stepGuard(wellCx + wellHx - T / 2, (z) => this._switchbackY(g, wellCx + wellHx - 0.1, z) ?? midElev); // flight B outer
     // sloped soffit closing the underside of each flight (visual — from the
     // hangar the stairs read as a solid structure, not floating treads)
-    const run = 2 * wellHz, rise = hiElev - midElev;
-    const soffitLen = Math.hypot(run, rise);
+    const rise = hiElev - midElev;
+    const soffitLen = Math.hypot(runZ, rise);
     const mkSoffit = (xLo, xHi, yMid, slopeSign) => {
       const s = new THREE.Mesh(new THREE.BoxGeometry(xHi - xLo, 0.1, soffitLen), matStep);
-      s.position.set((xLo + xHi) / 2, yMid - 0.28, wellCz);
-      s.rotation.x = Math.atan2(rise, run) * slopeSign;
+      s.position.set((xLo + xHi) / 2, yMid - 0.28, wellCz - landD / 2);
+      s.rotation.x = Math.atan2(rise, runZ) * slopeSign;
       this.scene.add(s);
     };
     mkSoffit(wellCx - wellHx, wellCx, (hiElev + midElev) / 2, 1);   // under flight A
     mkSoffit(wellCx, wellCx + wellHx, (midElev + loElev) / 2, -1);  // under flight B
     // fascia beam under the landing's leading edge
     const fascia = new THREE.Mesh(new THREE.BoxGeometry(2 * wellHx, 0.34, 0.1), matStep);
-    fascia.position.set(wellCx, midElev - 0.24, wellCz + wellHz - 2.0);
+    fascia.position.set(wellCx, midElev - 0.24, wellCz + wellHz - landD);
     this.scene.add(fascia);
     // landing back guard: past the well's rear edge at mid height is open
     // hangar airspace under the entry ring — wall it off (also gives the
@@ -1340,7 +1343,7 @@ export class World {
       const z0 = (wellCz - wellHz) + (s / 3) * 2 * wellHz;
       const z1 = (wellCz - wellHz) + ((s + 1) / 3) * 2 * wellHz;
       const zc = (z0 + z1) / 2;
-      const top = loElev + (midElev - loElev) * ((zc - (wellCz - wellHz)) / (2 * wellHz)) - 0.12;
+      const top = (this._switchbackY(g, wellCx + wellHx - 0.1, zc) ?? midElev) - 0.12;
       if (top - loElev < 0.4) continue;
       wallV(wellCx + wellHx + TW / 2, zc, TW, top - loElev, z1 - z0);
     }

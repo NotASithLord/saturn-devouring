@@ -65300,6 +65300,7 @@ var<${access}> ${name} : ${structName};`;
 var peerd_browser_exports = {};
 __export(peerd_browser_exports, {
   DEFAULT_ICE_SERVERS: () => DEFAULT_ICE_SERVERS2,
+  createBufferedChannel: () => createBufferedChannel,
   createDirect: () => createDirect,
   createGossip: () => createGossip,
   createMemoryTopicStore: () => createMemoryTopicStore,
@@ -68932,7 +68933,7 @@ function validGamePacket(packet) {
 var PROTOCOL_VERSION, MAX_PLAYERS, QUICKPLAY_ROOM, ROOM_PREFIX, SAFE_CODE, PUBLIC_LOBBY, GAME_KINDS, bytesToHex, hexToBytes;
 var init_protocol = __esm({
   "multiplayer/protocol.js"() {
-    PROTOCOL_VERSION = 17;
+    PROTOCOL_VERSION = 19;
     MAX_PLAYERS = 4;
     QUICKPLAY_ROOM = `charon:quickplay:v${PROTOCOL_VERSION}`;
     ROOM_PREFIX = `charon:v${PROTOCOL_VERSION}:`;
@@ -68952,6 +68953,29 @@ var init_protocol = __esm({
     ]);
     bytesToHex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
     hexToBytes = (hex) => Uint8Array.from(hex.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
+  }
+});
+
+// engine/shadow-budget.js
+function createShadowBudget(light) {
+  const intensity = light.shadow.intensity;
+  let enabled = true;
+  return {
+    setEnabled(value) {
+      enabled = !!value;
+      light.shadow.autoUpdate = false;
+      light.shadow.intensity = enabled ? intensity : 0;
+      light.shadow.needsUpdate = enabled;
+    },
+    requestUpdate() {
+      if (!enabled) return false;
+      light.shadow.needsUpdate = true;
+      return true;
+    }
+  };
+}
+var init_shadow_budget = __esm({
+  "engine/shadow-budget.js"() {
   }
 });
 
@@ -69906,13 +69930,33 @@ function clearHeightOf(node) {
   const gap = elevOf(node.deck - 1) - elevOf(node.deck);
   return Math.min(gap - 0.3, 8);
 }
-var DECK_H, CLEAR_H, HANGAR_LIFT, TALL_ROLES;
+function stairWellDims(hx, hz) {
+  const wellHx = Math.min(6.5, hx * 0.42), wellHz = Math.min(6, hz * 0.34);
+  return {
+    ox: hx * 0.12,
+    // well centre offset from room centre
+    wellHx,
+    wellHz,
+    landD: Math.min(STAIR_LAND_D, wellHz)
+    // never deeper than half the well
+  };
+}
+function switchbackElev(hi, lo, wellHx, wellHz, landD, lx, lz) {
+  if (lx < -wellHx || lx > wellHx || lz < -wellHz || lz > wellHz) return null;
+  const mid = (hi + lo) / 2;
+  if (lz >= wellHz - landD) return mid;
+  const t2 = (lz + wellHz) / (2 * wellHz - landD);
+  if (lx < 0) return hi - (hi - mid) * t2;
+  return lo + (mid - lo) * t2;
+}
+var DECK_H, CLEAR_H, HANGAR_LIFT, TALL_ROLES, STAIR_LAND_D;
 var init_geometry = __esm({
   "shared/geometry.js"() {
     DECK_H = 4.2;
     CLEAR_H = 3;
     HANGAR_LIFT = 4;
     TALL_ROLES = ["hangar", "large", "battery", "magazine", "stairwell", "vehicles"];
+    STAIR_LAND_D = 3.2;
   }
 });
 
@@ -69923,6 +69967,7 @@ function humanPass(link) {
 var LAYER, _ffSeq, EDGE_PREFIX, ShipGraph, marinePass;
 var init_graph = __esm({
   "sim/graph.js"() {
+    init_geometry();
     LAYER = { STD: "std", SHAFT: "shaft", VENT: "vent" };
     _ffSeq = 0;
     EDGE_PREFIX = { hatch: "H", blastdoor: "B", lift: "L", ladder: "K", stairwell: "T" };
@@ -70118,6 +70163,13 @@ var init_graph = __esm({
             l2.horizM = Math.max(2, Math.abs(a2.x - b2.x));
             l2.vertM = Math.abs(a2.deck - b2.deck) * this.deckHeightM;
             l2.flipT = 0.5;
+            if (l2.type === "stairwell") {
+              const U2 = a2.deck < b2.deck ? a2 : b2;
+              const { wellHx, wellHz, landD } = stairWellDims(U2.w / 2, U2.d / 2);
+              const drop = Math.abs(elevOf(a2.deck) - elevOf(b2.deck));
+              l2.vertM = drop;
+              l2.stairRunM = 2 * Math.hypot(2 * wellHz - landD, drop / 2) + wellHx;
+            }
           }
         };
         for (const l2 of this.edges) measure(l2);
@@ -70390,6 +70442,7 @@ var init_graph = __esm({
         if (l2.kind === "vent") return run * 1.35 / 1.65 + 2.4;
         if (l2.type === "lift") return l2.horizM / 1.4 + 10;
         if (l2.type === "ladder") return 1 + l2.vertM / 1.2;
+        if (l2.type === "stairwell") return (l2.stairRunM ?? run) / 1.4 + 0.8;
         return run / 1.4 + (l2.type === "blastdoor" ? 2.5 : 0.8);
       }
       // Fastest path from -> to as [{to, link, layer}] steps, or null.
@@ -75228,16 +75281,20 @@ function resolveCombat(sim2, dt) {
       const gn = sim2.graph.node(gunNode);
       const targets = sim2.occupants(floodNode).filter((a2) => !a2.dead && a2.hp > 0 && !a2.downed && (a2.faction === FACTION.COMBAT || a2.faction === FACTION.CARRIER || a2.faction === FACTION.INFECTION));
       if (!targets.length) continue;
-      sim2.gunfireAt(gunNode);
+      let stamped = false;
       for (const sh of shooters) {
         if (sim2.t < (sh.nextShotAt ?? 0)) continue;
-        const selected = selectRifleTarget(sh.fireTargetId, targets.map((target) => ({
+        const selected = selectRifleTarget(sh.fireTargetId, targets.filter((target) => sim2.losClear(sh.x, sh.y, gunNode, target.x, target.y, floodNode)).map((target) => ({
           target,
           range: Math.hypot(target.x - sh.x, target.y - sh.y)
         })));
         const best = selected?.target ?? null;
         sh.fireTargetId = best?.id;
-        if (!best) break;
+        if (!best) continue;
+        if (!stamped) {
+          stamped = true;
+          sim2.gunfireAt(gunNode);
+        }
         const gun = sh.faction === FACTION.MARINE ? P2.combat.marine.gun : P2.combat.armed.gun;
         sh.nextShotAt = sim2.t + 1 / gun.rof;
         let acc = gun.accFar;
@@ -75975,7 +76032,22 @@ var init_sim = __esm({
         const n1 = g2.node(r1), n2 = g2.node(r2);
         if (n1.deck !== n2.deck) {
           for (const sw of g2.stairwells) {
-            if (r1 === sw.upper && r2 === sw.lower || r1 === sw.lower && r2 === sw.upper) return true;
+            if (r1 === sw.upper && r2 === sw.lower || r1 === sw.lower && r2 === sw.upper) {
+              const U2 = g2.node(sw.upper);
+              const wp = this._stairWaypoints(U2);
+              const shift1 = this._bandC(n1.deck) - this._bandC(U2.deck);
+              const shift2 = this._bandC(n2.deck) - this._bandC(U2.deck);
+              return this._segCrossesRect(
+                x1,
+                y1 - shift1,
+                x2,
+                y2 - shift2,
+                wp.wellX,
+                wp.wellY,
+                wp.wellHx,
+                wp.wellHz
+              );
+            }
           }
           return false;
         }
@@ -76009,6 +76081,93 @@ var init_sim = __esm({
           cur = bestTo;
         }
         return false;
+      }
+      // A point f (0..1) of the way along a polyline, by ARC LENGTH — the walk
+      // covers every leg at one speed, however the corners split it.
+      _walkPolyline(pts, f2) {
+        let L2 = 0;
+        for (let i2 = 1; i2 < pts.length; i2++) L2 += Math.hypot(pts[i2].x - pts[i2 - 1].x, pts[i2].y - pts[i2 - 1].y);
+        let d2 = Math.max(0, Math.min(1, f2)) * L2;
+        for (let i2 = 1; i2 < pts.length; i2++) {
+          const l2 = Math.hypot(pts[i2].x - pts[i2 - 1].x, pts[i2].y - pts[i2 - 1].y);
+          if (d2 <= l2 || i2 === pts.length - 1) {
+            const u2 = l2 > 1e-9 ? Math.min(1, d2 / l2) : 1;
+            return [pts[i2 - 1].x + (pts[i2].x - pts[i2 - 1].x) * u2, pts[i2 - 1].y + (pts[i2].y - pts[i2 - 1].y) * u2];
+          }
+          d2 -= l2;
+        }
+        const p2 = pts[pts.length - 1];
+        return [p2.x, p2.y];
+      }
+      // Shortest corner detour around an axis-aligned rect (inflated by m) from
+      // (sx,sy) to (tx,ty): [] when the straight segment already clears it, else
+      // one or two corners of the inflated rect. Runs once at move start; used so
+      // a stairwell approach walks AROUND the open well / stair tower instead of
+      // cutting across the hole in plan.
+      _detourAroundRect(sx, sy, tx, ty, cx, cy, hx, hy, m2) {
+        const HX = hx + m2, HY = hy + m2;
+        const blocked = (ax, ay, bx, by) => this._segCrossesRect(ax, ay, bx, by, cx, cy, HX - 0.05, HY - 0.05);
+        const inside = (x2, y2) => Math.abs(x2 - cx) < HX && Math.abs(y2 - cy) < HY;
+        if (inside(sx, sy) || inside(tx, ty)) {
+          const esc = (x2, y2) => {
+            const dW = x2 - (cx - hx), dE = cx + hx - x2, dN = y2 - (cy - hy), dS = cy + hy - y2;
+            const min3 = Math.min(dW, dE, dN, dS);
+            if (min3 === dN) return { x: x2, y: cy - HY };
+            if (min3 === dS) return { x: x2, y: cy + HY };
+            if (min3 === dW) return { x: cx - HX, y: y2 };
+            return { x: cx + HX, y: y2 };
+          };
+          const s2 = inside(sx, sy) ? esc(sx, sy) : null;
+          const t2 = inside(tx, ty) ? esc(tx, ty) : null;
+          const midPts = this._detourAroundRect(s2?.x ?? sx, s2?.y ?? sy, t2?.x ?? tx, t2?.y ?? ty, cx, cy, hx, hy, m2);
+          return [...s2 ? [s2] : [], ...midPts, ...t2 ? [t2] : []];
+        }
+        if (!blocked(sx, sy, tx, ty)) return [];
+        const C2 = [
+          { x: cx - HX, y: cy - HY },
+          { x: cx + HX, y: cy - HY },
+          { x: cx - HX, y: cy + HY },
+          { x: cx + HX, y: cy + HY }
+        ];
+        let best = null, bestL = Infinity;
+        const consider = (pts) => {
+          let px2 = sx, py2 = sy, L2 = 0;
+          for (const p2 of pts) {
+            if (blocked(px2, py2, p2.x, p2.y)) return;
+            L2 += Math.hypot(p2.x - px2, p2.y - py2);
+            px2 = p2.x;
+            py2 = p2.y;
+          }
+          if (blocked(px2, py2, tx, ty)) return;
+          L2 += Math.hypot(tx - px2, ty - py2);
+          if (L2 < bestL - 1e-9) {
+            bestL = L2;
+            best = pts;
+          }
+        };
+        for (const c2 of C2) consider([c2]);
+        for (const c1 of C2) for (const c2 of C2) if (c1 !== c2) consider([c1, c2]);
+        return best ?? [];
+      }
+      // Does the 2D segment (x1,y1)->(x2,y2) pass through the axis-aligned rect
+      // centred (cx,cy) half-extents (hx,hy)? Liang–Barsky clip; endpoints inside
+      // count (a body standing ON the stairs is in the sightline volume itself).
+      _segCrossesRect(x1, y1, x2, y2, cx, cy, hx, hy) {
+        const dx = x2 - x1, dy = y2 - y1;
+        let t0 = 0, t1 = 1;
+        const clip = (p2, q2) => {
+          if (Math.abs(p2) < 1e-12) return q2 >= 0;
+          const r2 = q2 / p2;
+          if (p2 < 0) {
+            if (r2 > t1) return false;
+            if (r2 > t0) t0 = r2;
+          } else {
+            if (r2 < t0) return false;
+            if (r2 < t1) t1 = r2;
+          }
+          return true;
+        };
+        return clip(-dx, x1 - (cx - hx)) && clip(dx, cx + hx - x1) && clip(-dy, y1 - (cy - hy)) && clip(dy, cy + hy - y1);
       }
       // Real-space perception shared by combat and behavior. Rooms remain the
       // pathfinding mesh, but they no longer decide who can see whom: any live
@@ -77033,6 +77192,7 @@ var init_sim = __esm({
         const mps = M2.baseMps * Math.max(0.2, mult);
         if (link.type === "lift") return link.horizM / mps + M2.liftSec;
         if (link.type === "ladder") return 1 + link.vertM / M2.ladderClimbMps;
+        if (link.type === "stairwell") return (link.stairRunM ?? run) / mps + 0.5;
         return run / mps + (M2.doorDelaySec[link.type] ?? 0);
       }
       // A vent order still begins with a real walk to the grate. Route that short
@@ -77282,11 +77442,17 @@ var init_sim = __esm({
               const handT = Math.max(appT + 1e-3, 1 - exitT);
               const px0 = a2.x, py0 = a2.y;
               if (k2 < appT) {
-                const sx = a2.move.sx ?? from.x, sy = a2.move.sy ?? from.y;
-                const mouth = descending ? A2 : footLo;
                 const kk = appT > 1e-6 ? k2 / appT : 1;
-                a2.x = sx + (mouth.x - sx) * kk;
-                a2.y = sy + (mouth.y - sy) * kk;
+                if (a2.move.appPts) {
+                  const [ax, ay] = this._walkPolyline(a2.move.appPts, kk);
+                  a2.x = ax;
+                  a2.y = ay;
+                } else {
+                  const sx = a2.move.sx ?? from.x, sy = a2.move.sy ?? from.y;
+                  const mouth = descending ? A2 : footLo;
+                  a2.x = sx + (mouth.x - sx) * kk;
+                  a2.y = sy + (mouth.y - sy) * kk;
+                }
               } else if (k2 < handT) {
                 if (a2.deck !== upper.deck) {
                   a2.deck = upper.deck;
@@ -77307,10 +77473,16 @@ var init_sim = __esm({
                   a2.node = a2.move.to;
                   a2.deck = to.deck;
                 }
-                const [tx, ty] = this._parkSlot(a2, to);
                 const kk = handT < 1 ? Math.min(1, (k2 - handT) / (1 - handT)) : 1;
-                a2.x = Bdest.x + (tx - Bdest.x) * kk;
-                a2.y = Bdest.y + (ty - Bdest.y) * kk;
+                if (a2.move.exitPts) {
+                  const [ax, ay] = this._walkPolyline(a2.move.exitPts, kk);
+                  a2.x = ax;
+                  a2.y = ay;
+                } else {
+                  const [tx, ty] = this._parkSlot(a2, to);
+                  a2.x = Bdest.x + (tx - Bdest.x) * kk;
+                  a2.y = Bdest.y + (ty - Bdest.y) * kk;
+                }
               }
               a2.heading = Math.atan2(a2.y - py0, a2.x - px0) || a2.heading;
             } else if (a2.move.layer === "std" && from.deck !== to.deck) {
@@ -77521,14 +77693,56 @@ var init_sim = __esm({
                   const mouth = fromN === upper ? wp.top : wp.foot;
                   px2 = mouth.x;
                   py2 = mouth.y + shift;
+                  const preY = wp.wellY - wp.wellHz - 0.9;
+                  const pre = { x: px2, y: preY + shift };
+                  const appPts = [
+                    { x: a2.x, y: a2.y },
+                    ...this._detourAroundRect(
+                      a2.x,
+                      a2.y,
+                      pre.x,
+                      pre.y,
+                      wp.wellX,
+                      wp.wellY + shift,
+                      wp.wellHx,
+                      wp.wellHz,
+                      0.9
+                    ),
+                    pre,
+                    { x: px2, y: py2 }
+                  ];
                   const exitShift = this._bandC(toN.deck) - this._bandC(upper.deck);
                   const far = fromN === upper ? wp.foot : wp.top;
                   const [sx2, sy2] = this._parkSlot(a2, toN);
-                  const exitSec = Math.hypot(sx2 - far.x, sy2 - (far.y + exitShift)) / mps;
-                  const appSec2 = Math.hypot(px2 - a2.x, py2 - a2.y) / mps;
+                  const preD = { x: far.x, y: preY + exitShift };
+                  const exitPts = [
+                    { x: far.x, y: far.y + exitShift },
+                    preD,
+                    ...this._detourAroundRect(
+                      preD.x,
+                      preD.y,
+                      sx2,
+                      sy2,
+                      wp.wellX,
+                      wp.wellY + exitShift,
+                      wp.wellHx,
+                      wp.wellHz,
+                      0.9
+                    ),
+                    { x: sx2, y: sy2 }
+                  ];
+                  const plen = (pts) => {
+                    let L2 = 0;
+                    for (let i2 = 1; i2 < pts.length; i2++) L2 += Math.hypot(pts[i2].x - pts[i2 - 1].x, pts[i2].y - pts[i2 - 1].y);
+                    return L2;
+                  };
+                  const appSec2 = plen(appPts) / mps;
+                  const exitSec = plen(exitPts) / mps;
                   a2.move.travelSec += appSec2 + exitSec;
                   a2.move.appT = appSec2 / a2.move.travelSec;
                   a2.move.exitT = exitSec / a2.move.travelSec;
+                  a2.move.appPts = appPts;
+                  a2.move.exitPts = exitPts;
                 } else {
                   const pad = link.a === a2.node ? link.padA : link.padB;
                   const farPad = link.a === step3.to ? link.padA : link.padB;
@@ -77901,6 +78115,40 @@ var init_sim = __esm({
         const hw = Math.max(0, room.w / 2 - r2), hd = Math.max(0, room.d / 2 - r2);
         a2.x = Math.max(room.x - hw, Math.min(room.x + hw, a2.x));
         a2.y = Math.max(room.y - hd, Math.min(room.y + hd, a2.y));
+        if (a2.move?.link?.type !== "stairwell") {
+          const [wx, wy] = this._slideOutOfWell(room, a2.x, a2.y);
+          a2.x = wx;
+          a2.y = wy;
+        }
+      }
+      // The well/tower footprint to keep SIM positions out of, in node nd's own
+      // frame: the open well cut into the stairwell room, and the enclosed stair
+      // tower standing on the same spot on the deck below. null elsewhere.
+      _stairAvoid(nd) {
+        const cache3 = this._stairAvoidCache ??= /* @__PURE__ */ new Map();
+        if (cache3.has(nd.idx)) return cache3.get(nd.idx);
+        let out = null;
+        for (const s2 of this.graph.stairwells) {
+          if (nd.idx !== s2.upper && nd.idx !== s2.lower) continue;
+          const U2 = this.graph.node(s2.upper);
+          const wp = this._stairWaypoints(U2);
+          const shift = this._bandC(nd.deck) - this._bandC(U2.deck);
+          out = { x: wp.wellX, y: wp.wellY + shift, hx: wp.wellHx, hy: wp.wellHz };
+        }
+        cache3.set(nd.idx, out);
+        return out;
+      }
+      // slide a point out of the room's stair well/tower rect through the
+      // nearest face (the same rule the render's clamps use), or return it as-is
+      _slideOutOfWell(nd, x2, y2, m2 = 0.5) {
+        const w4 = this._stairAvoid(nd);
+        if (!w4 || Math.abs(x2 - w4.x) > w4.hx + m2 - 1e-9 || Math.abs(y2 - w4.y) > w4.hy + m2 - 1e-9) return [x2, y2];
+        const dW = x2 - (w4.x - w4.hx), dE = w4.x + w4.hx - x2, dN = y2 - (w4.y - w4.hy), dS = w4.y + w4.hy - y2;
+        const min3 = Math.min(dW, dE, dN, dS);
+        if (min3 === dN) return [x2, w4.y - w4.hy - m2];
+        if (min3 === dS) return [x2, w4.y + w4.hy + m2];
+        if (min3 === dW) return [w4.x - w4.hx - m2, y2];
+        return [w4.x + w4.hx + m2, y2];
       }
       _separate(dt) {
         const relax = Math.min(1, dt * 10);
@@ -78169,7 +78417,12 @@ var init_sim = __esm({
         const hw = Math.max(0.7, nd.w / 2 - 1), hd = Math.max(0.7, nd.d / 2 - 1);
         const ang = h12 * Math.PI * 2 + nd.idx * 0.7;
         const u2 = Math.sqrt(h2);
-        return [nd.x + Math.cos(ang) * u2 * hw, nd.y + Math.sin(ang) * u2 * hd];
+        return this._slideOutOfWell(
+          nd,
+          nd.x + Math.cos(ang) * u2 * hw,
+          nd.y + Math.sin(ang) * u2 * hd,
+          0.8
+        );
       }
       // A pod already committed to a body emerges toward that body. The grate is
       // still a real waypoint; only the arbitrary post-exit parking detour goes.
@@ -78198,15 +78451,23 @@ var init_sim = __esm({
         return (b2.y0 + b2.y1) / 2;
       }
       _stairWaypoints(U2) {
-        const wx = U2.x + U2.w / 2 * 0.12, wy = U2.y;
-        const hx = Math.min(6.5, U2.w / 2 * 0.42), hy = Math.min(6, U2.d / 2 * 0.34);
+        const { ox, wellHx, wellHz, landD } = stairWellDims(U2.w / 2, U2.d / 2);
+        const wx = U2.x + ox, wy = U2.y;
         return {
-          top: { x: wx - hx * 0.45, y: wy - hy * 0.82 },
+          // the mouths sit near the FRONT edge of each flight (0.92, was 0.82):
+          // the closer to the edge, the smaller the floor step when the deck
+          // label flips there — the traversal is height-continuous at both ends
+          top: { x: wx - wellHx * 0.45, y: wy - wellHz * 0.92 },
           // upper flight, front-left
-          mid: { x: wx, y: wy + hy * 0.72 },
-          // landing, back-centre
-          foot: { x: wx + hx * 0.45, y: wy - hy * 0.82 }
+          mid: { x: wx, y: wy + wellHz - landD / 2 },
+          // centre of the FLAT landing
+          foot: { x: wx + wellHx * 0.45, y: wy - wellHz * 0.92 },
           // lower flight, front-right
+          wellX: wx,
+          wellY: wy,
+          wellHx,
+          wellHz
+          // the well rect (for LOS)
         };
       }
       // COMMITTED INFECTION target (user rule): the physical node of the body a
@@ -80386,16 +80647,21 @@ var init_world = __esm({
         const hiElev = elevOf(n2.deck);
         const loElev = elevOf(n2.deck + 1);
         const midElev = (hiElev + loElev) / 2;
-        const wellCx = cx + hx * 0.12, wellCz = cz;
-        const wellHx = Math.min(6.5, hx * 0.42), wellHz = Math.min(6, hz * 0.34);
-        return { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz };
+        const { ox, wellHx, wellHz, landD } = stairWellDims(hx, hz);
+        const wellCx = cx + ox, wellCz = cz;
+        return { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz, landD };
       }
       // where in the switchback a well-point sits (or null if outside the well)
       _switchbackY(g2, wx, wz) {
-        if (wx < g2.wellCx - g2.wellHx || wx > g2.wellCx + g2.wellHx || wz < g2.wellCz - g2.wellHz || wz > g2.wellCz + g2.wellHz) return null;
-        const t2 = (wz - (g2.wellCz - g2.wellHz)) / (2 * g2.wellHz);
-        if (wx < g2.wellCx) return g2.hiElev - (g2.hiElev - g2.midElev) * t2;
-        return g2.loElev + (g2.midElev - g2.loElev) * t2;
+        return switchbackElev(
+          g2.hiElev,
+          g2.loElev,
+          g2.wellHx,
+          g2.wellHz,
+          g2.landD,
+          wx - g2.wellCx,
+          wz - g2.wellCz
+        );
       }
       // floor elevation under a world point — the deck floor normally; in a
       // stairwell room, the entry floor or the switchback where it descends.
@@ -80440,7 +80706,8 @@ var init_world = __esm({
       _buildStairRoom(n2) {
         const g2 = this._stairGeom(n2);
         (this.stairRooms ??= []).push({ deck: n2.deck, node: n2.idx, ...g2 });
-        const { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz } = g2;
+        const { cx, cz, hx, hz, hiElev, loElev, midElev, wellCx, wellCz, wellHx, wellHz, landD } = g2;
+        const runZ = 2 * wellHz - landD;
         const matStep = this._mkFloorMat(6121593);
         const matRail = new MeshStandardMaterial({ color: 10135224, roughness: 0.45, metalness: 0.7 });
         const fmat = this._mkFloorMat(9675192);
@@ -80452,9 +80719,9 @@ var init_world = __esm({
         }
         const steps = 9;
         const mkFlight = (xLo, xHi, yStart, yEnd, frontToBack) => {
-          const dz = 2 * wellHz / steps, dy = (yStart - yEnd) / steps;
+          const dz = runZ / steps, dy = (yStart - yEnd) / steps;
           for (let i2 = 0; i2 < steps; i2++) {
-            const zc = frontToBack ? wellCz - wellHz + (i2 + 0.5) * dz : wellCz + wellHz - (i2 + 0.5) * dz;
+            const zc = frontToBack ? wellCz - wellHz + (i2 + 0.5) * dz : wellCz + wellHz - landD - (i2 + 0.5) * dz;
             const yc = yStart - (i2 + 0.5) * dy;
             const tread = new Mesh(
               this._scaleFloorUV(new BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03),
@@ -80467,17 +80734,18 @@ var init_world = __esm({
         mkFlight(wellCx - wellHx, wellCx, hiElev, midElev, true);
         mkFlight(wellCx, wellCx + wellHx, midElev, loElev, false);
         const land = new Mesh(
-          this._scaleFloorUV(new BoxGeometry(2 * wellHx, 0.14, 2), 2 * wellHx, 2),
+          this._scaleFloorUV(new BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD),
           matStep
         );
-        land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - 1);
+        land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - landD / 2);
         this.scene.add(land);
-        const spine = new Mesh(new BoxGeometry(0.14, hiElev - loElev, 2 * wellHz - 2.2), this._matWall);
-        spine.position.set(wellCx, (hiElev + loElev) / 2, wellCz - 1);
+        const spineD = runZ - 0.2;
+        const spine = new Mesh(new BoxGeometry(0.14, hiElev - loElev, spineD), this._matWall);
+        spine.position.set(wellCx, (hiElev + loElev) / 2, wellCz - landD / 2);
         this.scene.add(spine);
         this.wallMeshes.push(spine);
-        const spineCap = new Mesh(new BoxGeometry(0.24, 0.07, 2 * wellHz - 2.2), matRail);
-        spineCap.position.set(wellCx, hiElev + 0.04, wellCz - 1);
+        const spineCap = new Mesh(new BoxGeometry(0.24, 0.07, spineD), matRail);
+        spineCap.position.set(wellCx, hiElev + 0.04, wellCz - landD / 2);
         this.scene.add(spineCap);
         const matPanel = new MeshStandardMaterial({
           map: this._matWall.map,
@@ -80528,21 +80796,20 @@ var init_world = __esm({
             guard(xEdge, (yLo + yHi) / 2, (z0 + z1) / 2, T3, yHi - yLo, z1 - z0);
           }
         };
-        const tOf = (z2) => (z2 - (wellCz - wellHz)) / (2 * wellHz);
-        stepGuard(wellCx - wellHx + T3 / 2, (z2) => hiElev - (hiElev - midElev) * tOf(z2));
-        stepGuard(wellCx + wellHx - T3 / 2, (z2) => loElev + (midElev - loElev) * tOf(z2));
-        const run = 2 * wellHz, rise = hiElev - midElev;
-        const soffitLen = Math.hypot(run, rise);
+        stepGuard(wellCx - wellHx + T3 / 2, (z2) => this._switchbackY(g2, wellCx - wellHx + 0.1, z2) ?? midElev);
+        stepGuard(wellCx + wellHx - T3 / 2, (z2) => this._switchbackY(g2, wellCx + wellHx - 0.1, z2) ?? midElev);
+        const rise = hiElev - midElev;
+        const soffitLen = Math.hypot(runZ, rise);
         const mkSoffit = (xLo, xHi, yMid, slopeSign) => {
           const s2 = new Mesh(new BoxGeometry(xHi - xLo, 0.1, soffitLen), matStep);
-          s2.position.set((xLo + xHi) / 2, yMid - 0.28, wellCz);
-          s2.rotation.x = Math.atan2(rise, run) * slopeSign;
+          s2.position.set((xLo + xHi) / 2, yMid - 0.28, wellCz - landD / 2);
+          s2.rotation.x = Math.atan2(rise, runZ) * slopeSign;
           this.scene.add(s2);
         };
         mkSoffit(wellCx - wellHx, wellCx, (hiElev + midElev) / 2, 1);
         mkSoffit(wellCx, wellCx + wellHx, (midElev + loElev) / 2, -1);
         const fascia = new Mesh(new BoxGeometry(2 * wellHx, 0.34, 0.1), matStep);
-        fascia.position.set(wellCx, midElev - 0.24, wellCz + wellHz - 2);
+        fascia.position.set(wellCx, midElev - 0.24, wellCz + wellHz - landD);
         this.scene.add(fascia);
         guard(wellCx, midElev + RAIL_H / 2, wellCz + wellHz - T3 / 2, 2 * wellHx, RAIL_H, T3);
         const TW = 0.12;
@@ -80559,7 +80826,7 @@ var init_world = __esm({
           const z0 = wellCz - wellHz + s2 / 3 * 2 * wellHz;
           const z1 = wellCz - wellHz + (s2 + 1) / 3 * 2 * wellHz;
           const zc = (z0 + z1) / 2;
-          const top = loElev + (midElev - loElev) * ((zc - (wellCz - wellHz)) / (2 * wellHz)) - 0.12;
+          const top = (this._switchbackY(g2, wellCx + wellHx - 0.1, zc) ?? midElev) - 0.12;
           if (top - loElev < 0.4) continue;
           wallV(wellCx + wellHx + TW / 2, zc, TW, top - loElev, z1 - z0);
         }
@@ -83673,7 +83940,7 @@ var init_agents3d = __esm({
             const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
             let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
             const ey = elevOf(sr.deck) + 1.3;
-            let ty = elevOf(tr.deck) + 0.7;
+            let ty = elevOf(tr.deck) + 0.7 + (tr.hoverY || 0);
             const range3 = Math.hypot(tx - sx, tz - sz);
             const sp = (0.22 + range3 * 0.05) * (0.7 + 0.7 * (sh.id * 7 % 5) / 4);
             const inv = 1 / (range3 || 1);
@@ -83726,8 +83993,8 @@ var init_agents3d = __esm({
           if (!sr || !tr) continue;
           const [sx, sz] = this.world.simToWorld(sr.x, sr.y, sr.deck);
           let [tx, tz] = this.world.simToWorld(tr.x, tr.y, tr.deck);
-          const ey = elevOf(sr.deck) + 1.05;
-          let ty = elevOf(tr.deck) + 0.9;
+          const ey = elevOf(sr.deck) + 1.05 + (sr.hoverY || 0);
+          let ty = elevOf(tr.deck) + 0.9 + (tr.hoverY || 0);
           const fdx = tx - sx, fdz = tz - sz;
           const frange = Math.hypot(fdx, fdz) || 1;
           const fsp = 0.5 + frange * 0.07;
@@ -85155,25 +85422,6 @@ var init_audio2 = __esm({
       bark2: ["bark2.wav"],
       bark3: ["bark3.wav"],
       bark4: ["bark4.wav"],
-      // THE BODY BECOMING SOMETHING ELSE (user): played once per conversion, at
-      // the MIDDLE of the convulsion rather than its start — the thrash is already
-      // running by then, so the sound lands on the worst of it instead of
-      // announcing it. Five takes, picked at random (see play()'s _alts).
-      // (These replaced the first morph set — "use these for human reanimation
-      // actually" — same cue, better recordings.)
-      reanim: ["reanim1.wav", "reanim2.wav", "reanim3.wav", "reanim4.wav", "reanim5.wav"],
-      // a combat form coming apart. Five takes so a firefight against a pack does
-      // not machine-gun the same wet crack.
-      gib: ["gib1.wav", "gib2.wav", "gib3.wav", "gib4.wav", "gib5.wav"],
-      // THE LOCK-ON (user: "use more frequently for combat forms who lock on and
-      // start moving to attack"): a combat form voices the moment it starts its
-      // sprint at prey. Five takes; a frequent cue, throttled in the sweep, not here.
-      aggro: ["aggro1.wav", "aggro2.wav", "aggro3.wav", "aggro4.wav", "aggro5.wav"],
-      // THE JUMP SCARE (user): one take, "only used very rarely and sparingly" —
-      // when the player's own room has flood pouring in and the bodies in it are
-      // outnumbered 2:1 — "and even then not always", and AT MOST ONCE A GAME.
-      // The once-per-run latch and the dice both live in main.js's scare director.
-      scare: ["scare.wav"],
       // CARRIER MOVEMENT (user): the bloated form on the move — wet, heavy bulk.
       // Five takes, voiced per carrier while it is actually walking, alongside the
       // stationary gurgle.
@@ -94757,7 +95005,7 @@ function traceShot(offAng = 0, offRad = 0, maxDist = 100, dmg = MA5.damage) {
   let best = null, bestT = Math.min(maxDist, wallT);
   for (const a2 of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + (a2.hoverY || 0);
+    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + hoverOf(a2);
     _hit.set(wx, cy, wz).sub(origin);
     const t2 = _hit.dot(_dir);
     if (t2 < 0.05 || t2 > bestT) continue;
@@ -94799,7 +95047,7 @@ function meleeStrike() {
   let best = null, bestD = Infinity;
   for (const a2 of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + (a2.hoverY || 0);
+    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + hoverOf(a2);
     const d2 = meleeArcDistance(
       origin.x,
       origin.z,
@@ -94853,7 +95101,7 @@ function solveFlameAim() {
   let target = null, targetT = Infinity;
   for (const a2 of shotCandidates()) {
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + (a2.hoverY || 0);
+    const cy = elevOf(a2.deck) + (a2.faction === 3 ? 0.35 : a2.downed ? 0.35 : 0.9) + hoverOf(a2);
     _fto.set(wx, cy, wz).sub(origin);
     const d2 = _fto.length();
     const along = _fto.dot(_fdir);
@@ -95188,31 +95436,12 @@ function soundSweep(now) {
       chitterAt = now;
     }
     if (a2.faction === 5 && (!nearCarrier || d2 < nearCarrier.d)) nearCarrier = { wx, wz, d: d2 };
-    if (a2.transformingUntil !== void 0 && d2 < 30 && !_morphed.has(a2.id)) {
-      const mid = a2.transformingUntil - sim.P.combat.thrashSec * 0.5;
-      if (sim.t >= mid) {
-        _morphed.add(a2.id);
-        audio.play("reanim", { x: wx, z: wz }, 0.95);
-      }
-    }
-    if (a2.faction === 4 && a2.charging && !a2.downed && d2 < 30) {
-      const last2 = _aggroAt.get(a2.id) ?? -1e9;
-      if (now - last2 > 9e3 && now - aggroGlobalAt > 650) {
-        _aggroAt.set(a2.id, now);
-        aggroGlobalAt = now;
-        audio.play("aggro", { x: wx, z: wz }, 0.9);
-      }
-    }
     if (a2.faction === 5) {
       const pv = _carrierPos.get(a2.id);
       _carrierPos.set(a2.id, { x: a2.x, y: a2.y });
       if (pv && d2 < 22 && Math.hypot(a2.x - pv.x, a2.y - pv.y) > 0.02) {
         audio.play("carrier", { x: wx, z: wz }, 0.85, `car${a2.id}`, 2400);
       }
-    }
-    if (a2.faction === 4 && a2.downed && !_gibbed.has(a2.id)) {
-      _gibbed.add(a2.id);
-      if (d2 < 34) audio.play("gib", { x: wx, z: wz }, 1);
     }
   }
   if (nearCarrier && nearCarrier.d < 16 && now - gurgleAt > 3200 + Math.random() * 2500) {
@@ -95298,36 +95527,6 @@ function updateBarks(now) {
   }
   barkState.lastAt = now;
   barkState.active = { src, id: pick.m.id, endsAt: now + (buf ? buf.duration * 1e3 : 3e3) };
-}
-function updateScare(now) {
-  if (scareState.spent || now < scareState.checkAt) return;
-  scareState.checkAt = now + 900;
-  const pa = player.agent;
-  if (pa.dead || pa.hp <= 0) return;
-  let marinesAlive = 0;
-  for (const a2 of sim.agents) {
-    if (a2.faction === 2 && !a2.dead && a2.hp > 0 && !a2.isPlayer && !a2.fromPlayer) marinesAlive++;
-  }
-  if (marinesAlive > scareState.marines0 * 0.3) return;
-  const room = pa.pnode ?? pa.node;
-  let flood = 0, humans = 1;
-  for (const a2 of sim.agents) {
-    if (a2.dead || a2.hp <= 0 || (a2.pnode ?? a2.node) !== room) continue;
-    if (a2.move?.hidden) continue;
-    if (a2.faction === 3 || a2.faction === 4 || a2.faction === 5) flood++;
-    else if (a2.faction === 2 && a2.id !== pa.id) humans++;
-  }
-  const h2 = scareState.hist;
-  if (h2.length && h2[h2.length - 1].room !== room) h2.length = 0;
-  h2.push({ t: now, room, flood });
-  while (h2.length && now - h2[0].t > 6e3) h2.shift();
-  const pouring = h2.length >= 2 && flood - h2[0].flood >= 2;
-  const eligible = pouring && flood >= humans * 2;
-  if (eligible && !scareState.eligible && Math.random() < 0.4) {
-    scareState.spent = true;
-    audio.play("scare", null, 1);
-  }
-  scareState.eligible = eligible;
 }
 function updateAfterlife(now) {
   const hud = el("spectatorHud");
@@ -95616,7 +95815,6 @@ function frame(now) {
   world.setExteriorView(camera.position.x, camera.position.y, camera.position.z, !inFog);
   world.setActiveVolume(povDeck, povX);
   updateBarks(now);
-  updateScare(now);
   lightPool.frame();
   syncBurnFires();
   fire.update(dtReal, povX, povZ, elevOf(povDeck));
@@ -95820,10 +96018,7 @@ function frame(now) {
       _fpsWorst *= 0.55;
     }
   }
-  if (torch.castShadow && now - _shadowAt >= 30) {
-    _shadowAt = now;
-    torch.shadow.needsUpdate = true;
-  }
+  if (now - _shadowAt >= 30 && torchShadows.requestUpdate()) _shadowAt = now;
   renderer.info.reset();
   if (_renderStopped) return;
   try {
@@ -95913,9 +96108,10 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _morphed, _gibbed, aggroGlobalAt, _aggroAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, scareState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
+    init_shadow_budget();
     init_three_webgpu_module();
     init_sim();
     init_agentBuffer();
@@ -96058,6 +96254,7 @@ var init_main = __esm({
     torch.shadow.bias = -2e-3;
     torch.shadow.radius = 4;
     torch.shadow.intensity = 0.62;
+    torchShadows = createShadowBudget(torch);
     LAUNCH = globalThis.__charonLaunch ?? await new Promise((resolve) => {
       window.addEventListener("charon:launch", (event) => resolve(event.detail), { once: true });
     });
@@ -96321,11 +96518,8 @@ var init_main = __esm({
       label: "charon",
       apply: (R2, i2) => {
         rung = i2;
-        torch.castShadow = R2.shadows;
-        if (R2.shadows) {
-          torch.shadow.needsUpdate = true;
-          _shadowAt = performance.now();
-        }
+        torchShadows.setEnabled(R2.shadows);
+        if (R2.shadows) _shadowAt = performance.now();
         lightPool.setActive(R2.lights);
         setTeamSpots(R2.teamSpots ?? 3);
         post.setBloomScale(R2.bloom);
@@ -96405,10 +96599,7 @@ var init_main = __esm({
         lite: R2.litePost,
         signal,
         beforeRender: () => {
-          if (torch.castShadow) {
-            torch.shadow.needsUpdate = true;
-            _shadowAt = performance.now();
-          }
+          if (torchShadows.requestUpdate()) _shadowAt = performance.now();
         }
       })
     });
@@ -97095,6 +97286,10 @@ var init_main = __esm({
     _hit = new Vector3();
     _shotSolids = null;
     bodyRadius = (a2) => a2.faction === 3 ? 0.5 : a2.faction === 5 ? 1 : 0.7;
+    hoverOf = (a2) => {
+      const rp = agents.rpos.get(a2.id);
+      return (rp ? rp.hoverY : a2.hoverY) || 0;
+    };
     _mdir = new Vector3();
     _mto = new Vector3();
     _mray = new Vector3();
@@ -97125,10 +97320,6 @@ var init_main = __esm({
     trkState = { static: false, until: 0, phantoms: [], nextPhantom: 0 };
     chitterAt = 0;
     gurgleAt = 0;
-    _morphed = /* @__PURE__ */ new Set();
-    _gibbed = /* @__PURE__ */ new Set();
-    aggroGlobalAt = 0;
-    _aggroAt = /* @__PURE__ */ new Map();
     _carrierPos = /* @__PURE__ */ new Map();
     _gunVoiced = null;
     _obstacleR = { 3: 0.32, 4: 0.48, 5: 0.75 };
@@ -97138,15 +97329,6 @@ var init_main = __esm({
     _obstacleKey = -1;
     BARK_KEYS = ["bark1", "bark2", "bark3", "bark4"];
     barkState = { unspent: BARK_KEYS.slice(), active: null, lastAt: -1e9, checkAt: 0 };
-    scareState = {
-      spent: false,
-      eligible: false,
-      checkAt: 0,
-      hist: [],
-      // captured at module eval — the sim exists and no tick has run, so every
-      // marine the ship will ever have is alive right now (none are minted later)
-      marines0: shipMarines0
-    };
     physAcc = 0;
     _trackerAt = 0;
     _observeAt = 0;
@@ -97277,6 +97459,265 @@ var init_main = __esm({
 // charon-dwapp-hub.mjs
 init_three_webgpu_module();
 
+// multiplayer/ice-fallback.js
+var DIRECT_ICE_TIMEOUT_MS = 5e3;
+var RELAY_CREDENTIAL_TIMEOUT_MS = 3e3;
+function createIceFallback({
+  pc,
+  getRelayIceServers,
+  restart,
+  isConnected = () => ["connected", "completed"].includes(pc.iceConnectionState),
+  timeoutMs = DIRECT_ICE_TIMEOUT_MS,
+  onError = () => {
+  }
+}) {
+  let timer;
+  let pending;
+  let stopped = false;
+  let attempted = false;
+  let enabled = false;
+  const abort = new AbortController();
+  const usable = () => !stopped && pc.signalingState !== "closed" && !isConnected();
+  const clear = () => {
+    clearTimeout(timer);
+    timer = void 0;
+  };
+  const enable = () => {
+    clear();
+    if (pending) return pending;
+    if (attempted || !usable() || !getRelayIceServers) return Promise.resolve(false);
+    attempted = true;
+    pending = (async () => {
+      const credentialTimer = setTimeout(() => abort.abort(), RELAY_CREDENTIAL_TIMEOUT_MS);
+      try {
+        const servers = await getRelayIceServers({ signal: abort.signal });
+        if (!usable() || abort.signal.aborted || !servers?.length) return false;
+        const configuration = pc.getConfiguration();
+        pc.setConfiguration({
+          ...configuration,
+          iceServers: [...configuration.iceServers ?? [], ...servers],
+          iceTransportPolicy: "all"
+        });
+        enabled = true;
+        return true;
+      } finally {
+        clearTimeout(credentialTimer);
+      }
+    })();
+    return pending;
+  };
+  let retry;
+  const tryFallback = () => {
+    if (retry) return retry;
+    retry = (async () => {
+      try {
+        if (await enable() && usable()) await restart();
+      } catch (error2) {
+        if (!stopped) onError(error2);
+      }
+    })();
+    return retry;
+  };
+  return {
+    start() {
+      if (!timer && !attempted && usable()) timer = setTimeout(tryFallback, timeoutMs);
+    },
+    enable,
+    tryFallback,
+    connected: clear,
+    stop() {
+      stopped = true;
+      clear();
+      abort.abort();
+    },
+    get enabled() {
+      return enabled;
+    }
+  };
+}
+
+// multiplayer/direct-first-transport.js
+function createDirectFirstTransport({
+  iceServers,
+  getRelayIceServers,
+  createBufferedChannel: createBufferedChannel2,
+  RTCPeerConnection = globalThis.RTCPeerConnection,
+  directTimeoutMs
+}) {
+  const begin = ({ initiator, offer, signaling, signal }) => {
+    if (!signaling?.send || !signaling?.onRemote) throw new Error("signaling is required");
+    const pc = new RTCPeerConnection({ bundlePolicy: "max-bundle", iceTransportPolicy: "all", iceServers });
+    let opened = false;
+    let closed = false;
+    let off = () => {
+    };
+    let channel;
+    let disconnectTimer;
+    let descriptionSent = false;
+    let localCandidates = [];
+    const remoteCandidates = [];
+    let resolve;
+    let reject;
+    const ready = new Promise((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    void ready.catch(() => {
+    });
+    const cleanup = () => {
+      fallback.stop();
+      off();
+      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(disconnectTimer);
+    };
+    const close = (error2 = new Error("WebRTC connection closed")) => {
+      if (closed) return;
+      closed = true;
+      cleanup();
+      pc.close();
+      channel?.signalClose();
+      if (!opened) reject(error2);
+    };
+    const onAbort = () => {
+      if (!opened) close(new Error("WebRTC connection cancelled"));
+    };
+    const sendDescription = async (description, relayFallback = false) => {
+      descriptionSent = false;
+      localCandidates = [];
+      await pc.setLocalDescription(description);
+      if (closed) return;
+      signaling.send({ type: description.type, sdp: pc.localDescription.sdp, relayFallback });
+      descriptionSent = true;
+      for (const ice of localCandidates.splice(0)) signaling.send({ ice });
+    };
+    const fallback = createIceFallback({
+      pc,
+      getRelayIceServers,
+      timeoutMs: directTimeoutMs,
+      isConnected: () => opened || ["connected", "completed"].includes(pc.iceConnectionState),
+      restart: async () => {
+        if (!initiator || closed || opened) return;
+        await sendDescription(await pc.createOffer({ iceRestart: true }), true);
+      },
+      // A credential outage must not interrupt a direct attempt still running.
+      onError: () => {
+      }
+    });
+    pc.onicecandidate = ({ candidate }) => {
+      if (!candidate || closed) return;
+      const ice = candidate.toJSON ? candidate.toJSON() : candidate;
+      if (descriptionSent) signaling.send({ ice });
+      else localCandidates.push(ice);
+    };
+    const wire = (dc) => {
+      dc.binaryType = "arraybuffer";
+      channel = createBufferedChannel2({
+        send: (message) => {
+          if (dc.readyState === "open") dc.send(JSON.stringify(message));
+        },
+        close: () => {
+          dc.close();
+          close();
+        }
+      });
+      channel.pc = pc;
+      dc.onmessage = ({ data }) => {
+        const bytes = typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+        if (bytes > 1e6) return;
+        let message;
+        try {
+          message = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data));
+        } catch {
+          return;
+        }
+        channel.deliver(message);
+      };
+      dc.onclose = () => close();
+      dc.onopen = () => {
+        if (closed || opened) return;
+        opened = true;
+        cleanup();
+        resolve(channel);
+      };
+      if (dc.readyState === "open") dc.onopen();
+    };
+    if (initiator) wire(pc.createDataChannel("peerd", { ordered: true }));
+    else pc.ondatachannel = ({ channel: dc }) => wire(dc);
+    const stateChanged = () => {
+      if (closed) return;
+      const state = pc.iceConnectionState;
+      if (state === "connected" || state === "completed") {
+        fallback.connected();
+        clearTimeout(disconnectTimer);
+        disconnectTimer = void 0;
+      } else if (!opened && state === "failed") {
+        if (initiator) void fallback.tryFallback();
+      } else if (opened && (state === "failed" || state === "closed")) close();
+      else if (opened && state === "disconnected" && !disconnectTimer) {
+        disconnectTimer = setTimeout(() => {
+          if (!["connected", "completed"].includes(pc.iceConnectionState)) close();
+        }, 5e3);
+      }
+    };
+    pc.addEventListener("iceconnectionstatechange", stateChanged);
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc.connectionState === "closed") close();
+      else if (pc.connectionState === "failed") {
+        if (opened) close();
+        else if (initiator) void fallback.tryFallback();
+      }
+    });
+    const setRemote = async (description) => {
+      await pc.setRemoteDescription(description);
+      for (const ice of remoteCandidates.splice(0)) await pc.addIceCandidate(ice).catch(() => {
+      });
+    };
+    let queue = Promise.resolve();
+    let fallbackOfferSeen = false;
+    const receive = async (message) => {
+      if (!message || closed || opened) return;
+      if (message.type === "offer" && !initiator) {
+        if (message.relayFallback === true) {
+          if (fallbackOfferSeen || !pc.remoteDescription) return;
+          fallbackOfferSeen = true;
+          try {
+            await fallback.enable();
+          } catch {
+          }
+        }
+        await setRemote({ type: "offer", sdp: message.sdp });
+        await sendDescription(await pc.createAnswer());
+      } else if (message.type === "answer" && initiator) {
+        await setRemote({ type: "answer", sdp: message.sdp });
+      } else if (message.ice) {
+        if (pc.remoteDescription) await pc.addIceCandidate(message.ice).catch(() => {
+        });
+        else if (remoteCandidates.length < 64) remoteCandidates.push(message.ice);
+      }
+    };
+    off = signaling.onRemote((message) => {
+      queue = queue.then(() => receive(message)).catch(close);
+    });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    const start = async () => {
+      if (closed) return;
+      if (initiator) {
+        await sendDescription(await pc.createOffer());
+        fallback.start();
+      } else await receive(offer);
+    };
+    queue = queue.then(start).catch(close);
+    return ready;
+  };
+  return {
+    name: "webrtc",
+    canReach: () => 0.6,
+    connect: (_peer, options) => begin({ ...options, initiator: true }),
+    accept: async (options) => ({ channel: begin({ ...options, initiator: false }) })
+  };
+}
+
 // multiplayer/dweb-client.js
 function createDwebClient({ timeoutMs = 2500 } = {}) {
   let sequence = 0;
@@ -97402,6 +97843,7 @@ function createRoomVoice({
   onState = () => {
   },
   iceServers = DEFAULT_ICE_SERVERS,
+  getRelayIceServers,
   RTCPeerConnection: PeerConnection = globalThis.RTCPeerConnection,
   mediaDevices = globalThis.navigator?.mediaDevices,
   createAudio = () => document.createElement("audio")
@@ -97436,6 +97878,8 @@ function createRoomVoice({
     const record = connections.get(peer);
     if (!record) return;
     connections.delete(peer);
+    record.fallback?.stop();
+    clearTimeout(record.connectTimer);
     const timer = disconnectTimers.get(peer);
     if (timer) clearTimeout(timer);
     disconnectTimers.delete(peer);
@@ -97507,6 +97951,29 @@ function createRoomVoice({
     }
     const record = { pc, audio: audio2, remoteSession, pendingIce: [] };
     connections.set(peer, record);
+    record.fallback = createIceFallback({
+      pc,
+      getRelayIceServers,
+      restart: async () => {
+        if (selfDid >= peer || connections.get(peer) !== record) return;
+        const offer = await pc.createOffer({ iceRestart: true });
+        if (connections.get(peer) !== record) return;
+        await pc.setLocalDescription(offer);
+        if (connections.get(peer) !== record) return;
+        await send(peer, {
+          __peerdMedia: MEDIA_MARKER,
+          scope,
+          kind: "offer",
+          session: localSession,
+          replyTo: remoteSession,
+          sdp: pc.localDescription.sdp,
+          relayFallback: true
+        });
+      }
+    });
+    record.connectTimer = setTimeout(() => {
+      if (connections.get(peer) === record && pc.connectionState !== "connected") closePeer(peer);
+    }, 15e3);
     pc.onicecandidate = (event) => {
       const candidate = event.candidate;
       if (!candidate || connections.get(peer) !== record) return;
@@ -97540,6 +98007,9 @@ function createRoomVoice({
     pc.onconnectionstatechange = () => {
       if (connections.get(peer) !== record) return;
       if (pc.connectionState === "connected") {
+        record.wasConnected = true;
+        record.fallback.stop();
+        clearTimeout(record.connectTimer);
         const timer = disconnectTimers.get(peer);
         if (timer) clearTimeout(timer);
         disconnectTimers.delete(peer);
@@ -97553,8 +98023,12 @@ function createRoomVoice({
           }
         }, 3e3));
       } else if (pc.connectionState === "failed") {
-        closePeer(peer);
-        sendReady(peer, false);
+        if (record.wasConnected) {
+          closePeer(peer);
+          sendReady(peer, false);
+          return;
+        }
+        if (selfDid < peer) void record.fallback.tryFallback();
       }
     };
     report();
@@ -97578,6 +98052,7 @@ function createRoomVoice({
       replyTo: remoteSession,
       sdp: record.pc.localDescription.sdp
     });
+    record.fallback.start();
   };
   const flushIce = async (record) => {
     for (const candidate of record.pendingIce.splice(0)) {
@@ -97608,7 +98083,16 @@ function createRoomVoice({
       const previous = remoteSessions.get(from);
       if (previous && previous !== data.session) closePeer(from);
       remoteSessions.set(from, data.session);
-      const record2 = makePeer(from, data.session);
+      let record2 = connections.get(from);
+      if (data.relayFallback === true) {
+        if (!record2 || record2.remoteSession !== data.session || record2.fallbackOfferSeen) return true;
+        record2.fallbackOfferSeen = true;
+        try {
+          await record2.fallback.enable();
+        } catch {
+        }
+        if (connections.get(from) !== record2) return true;
+      } else record2 = makePeer(from, data.session);
       if (!record2) return true;
       const early = earlyIce.get(from);
       if (early?.session === data.session) record2.pendingIce.push(...early.candidates);
@@ -98088,6 +98572,7 @@ var BrowserSession = class extends SessionBase {
       selfDid: this.did,
       scope: this.roomId,
       iceServers: args.iceServers,
+      getRelayIceServers: args.getRelayIceServers,
       sendSignal: (to, signal) => this.direct.send(to, signal),
       onState: (status) => this.emit("voice", status)
     });
@@ -98179,6 +98664,7 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
   }
   const {
     DEFAULT_ICE_SERVERS: DEFAULT_ICE_SERVERS3,
+    createBufferedChannel: createBufferedChannel2,
     generateIdentity: generateIdentity2,
     joinRoom: joinRoom2,
     createGossip: createGossip2,
@@ -98198,18 +98684,24 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
   let relayIceServers;
   const unsubscribers = [];
   try {
-    try {
-      relayIceServers = await fetchRelayIceServers({ signal });
-    } catch (error2) {
-      if (signal?.aborted) throw cancelledJoinError();
-    }
-    const iceServers = [...DEFAULT_ICE_SERVERS3, ...relayIceServers ?? []];
+    const iceServers = DEFAULT_ICE_SERVERS3;
+    const getRelayIceServers = async (options) => {
+      const servers = await fetchRelayIceServers(options);
+      relayIceServers = servers;
+      return servers;
+    };
+    const transport = createDirectFirstTransport({
+      iceServers,
+      getRelayIceServers,
+      createBufferedChannel: createBufferedChannel2
+    });
     try {
       room = await joinRoom2({
         roomId,
         identity,
         kind: "website",
         iceServers,
+        transport,
         audit(event) {
           const failure = peerConnectionFailure(event, { relayAvailable: !!relayIceServers });
           if (!failure) return;
@@ -98239,6 +98731,7 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
       presence,
       direct,
       iceServers,
+      getRelayIceServers,
       unsubscribers
     });
     unsubscribers.push(

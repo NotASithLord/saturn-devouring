@@ -3238,6 +3238,7 @@ var createDirect = ({ mesh }) => {
   });
 };
 export {
+  createBufferedChannel,
   DEFAULT_ICE_SERVERS,
   createDirect,
   createGossip,

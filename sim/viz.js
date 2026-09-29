@@ -4,6 +4,7 @@
 // influence heatmap, traversal overlays, distress rings, stats panel.
 
 import { FACTION, FLAG } from '../shared/agentBuffer.js';
+import { stairWellDims } from '../shared/geometry.js';
 import { fmtTime } from './sim.js';
 import { STATE } from './init.js';
 import { TASK } from './hive.js';
@@ -223,6 +224,27 @@ export class Viz {
           else ctx.strokeRect(e.door.x - wt / 2 - 0.25, e.door.y - wl - 0.3, wt + 0.5, DOOR_W + 0.6);
         }
         if (this.overlays.conns) this._connLabel(e.door.x, e.door.y, e.label, e.locked ? '#e06a5a' : '#5a708f');
+      } else if (a.deck !== b.deck && e.type === 'stairwell') {
+        // the grand stairwell is WALKED, not a trunk portal (user: no
+        // stair/ladder pad glyph here) — draw the actual well on both
+        // levels at the same physical spot: rect, switchback spine, and
+        // the flat mid landing band, matching shared/geometry.js
+        const U = a.deck < b.deck ? a : b;
+        const dims = stairWellDims(U.w / 2, U.d / 2);
+        const bandC = (deck) => { const bb = g.deckBands[deck - 1]; return (bb.y0 + bb.y1) / 2; };
+        for (const n of [a, b]) {
+          if (!this._visible(n.idx)) continue;
+          const wx = U.x + dims.ox, wy = U.y - bandC(U.deck) + bandC(n.deck);
+          ctx.strokeStyle = '#8fb46a';
+          ctx.lineWidth = this._lw(1.2);
+          ctx.strokeRect(wx - dims.wellHx, wy - dims.wellHz, dims.wellHx * 2, dims.wellHz * 2);
+          ctx.beginPath(); // the spine between the two flights
+          ctx.moveTo(wx, wy - dims.wellHz); ctx.lineTo(wx, wy + dims.wellHz - dims.landD);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(143,180,106,0.22)'; // the mid landing
+          ctx.fillRect(wx - dims.wellHx, wy + dims.wellHz - dims.landD, dims.wellHx * 2, dims.landD);
+          if (this.overlays.conns) this._connLabel(wx, wy - dims.wellHz - 2, e.label, '#5a708f');
+        }
       } else if (a.deck !== b.deck) {
         // lift/ladder pads at both ends (same placement rule as the 3D world)
         for (const [n, other] of [[a, b], [b, a]]) {
