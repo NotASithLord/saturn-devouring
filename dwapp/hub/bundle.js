@@ -15075,14 +15075,14 @@ var init_three_core = __esm({
         }
         this.needsUpdate = false;
         const cache3 = [];
-        let current, last2 = this.getPoint(0);
+        let current, last = this.getPoint(0);
         let sum = 0;
         cache3.push(0);
         for (let p2 = 1; p2 <= divisions; p2++) {
           current = this.getPoint(p2 / divisions);
-          sum += current.distanceTo(last2);
+          sum += current.distanceTo(last);
           cache3.push(sum);
-          last2 = current;
+          last = current;
         }
         this.cacheArcLengths = cache3;
         return cache3;
@@ -63058,6 +63058,7 @@ var<${access}> ${name} : ${structName};`;
         super(maxQueries);
         this.device = device;
         this.type = type;
+        this.queryStartTime = 0;
         _querySetDescriptor$1.label = `queryset_global_timestamp_${type}`;
         _querySetDescriptor$1.type = "timestamp";
         _querySetDescriptor$1.count = this.maxQueries;
@@ -63088,6 +63089,7 @@ var<${access}> ${name} : ${structName};`;
           return null;
         }
         const baseOffset = this.currentQueryIndex;
+        if (baseOffset === 0) this.queryStartTime = performance.now();
         this.currentQueryIndex += 2;
         this.queryOffsets.set(uid, baseOffset);
         return baseOffset;
@@ -63132,6 +63134,7 @@ var<${access}> ${name} : ${structName};`;
           const currentOffsets = new Map(this.queryOffsets);
           const queryCount = this.currentQueryIndex;
           const bytesUsed = queryCount * 8;
+          const queryStartTime = this.queryStartTime;
           this.currentQueryIndex = 0;
           this.queryOffsets.clear();
           const commandEncoder = this.device.createCommandEncoder(_commandEncoderDescriptor$1);
@@ -63163,6 +63166,10 @@ var<${access}> ${name} : ${structName};`;
           }
           const times = new BigUint64Array(this.resultBuffer.getMappedRange(0, bytesUsed));
           const framesDuration = {};
+          const timestamps = /* @__PURE__ */ new Map();
+          const wallMS = performance.now() - queryStartTime;
+          const maximumDuration = wallMS * 1.1 + 2;
+          let valid = Number.isFinite(wallMS) && wallMS >= 0;
           const frames = [];
           for (const [uid, baseOffset] of currentOffsets) {
             const match = uid.match(/^(.*):f(\d+)$/);
@@ -63174,11 +63181,19 @@ var<${access}> ${name} : ${structName};`;
             const startTime = times[baseOffset];
             const endTime = times[baseOffset + 1];
             const duration = Number(endTime - startTime) / 1e6;
-            this.timestamps.set(uid, duration);
+            if (endTime < startTime || !Number.isFinite(duration) || duration > maximumDuration) {
+              valid = false;
+              break;
+            }
+            timestamps.set(uid, duration);
             framesDuration[frame2] += duration;
           }
           const totalDuration = framesDuration[frames[frames.length - 1]];
           this.resultBuffer.unmap();
+          if (!valid || frames.length === 0 || frames.some((frame2) => !(framesDuration[frame2] > 0 && framesDuration[frame2] <= maximumDuration))) {
+            return this.lastValue;
+          }
+          for (const [uid, duration] of timestamps) this.timestamps.set(uid, duration);
           this.lastValue = totalDuration;
           this.frames = frames;
           return totalDuration;
@@ -68729,7 +68744,7 @@ function beginIntroCrawl() {
   let finalBody = false;
   let progress = 1;
   let shown = -1;
-  let last2 = 0;
+  let last = 0;
   let done = false;
   let cancelled = false;
   const render = () => {
@@ -68746,8 +68761,8 @@ function beginIntroCrawl() {
   };
   const frame2 = (now) => {
     if (cancelled || done) return;
-    const elapsed = last2 ? (now - last2) / 1e3 : 0;
-    last2 = now;
+    const elapsed = last ? (now - last) / 1e3 : 0;
+    last = now;
     const limit = body.length + (finalBody ? INTRO_MISSION.length : 0);
     progress = Math.min(limit, advanceIntroProgress(progress, elapsed));
     render();
@@ -92749,18 +92764,27 @@ var init_runtime = __esm({
         this._evalAt = 0;
         this._slow = 0;
         this._fast = 0;
+        this._resFast = 0;
         this._movedAt = 0;
+        this._resMovedAt = 0;
+        this._resolutionProbe = null;
+        this._resolutionLimits = rungs.map(() => ({ ceiling: Infinity, retryAt: 0, backoffMS: 0 }));
         this._prewarmRun = null;
+        this._resetFrameHistory(0);
       }
-      applyRung(i2) {
+      applyRung(i2, now = performance.now()) {
+        const changed = this.rung !== i2;
         this.rung = i2;
         this.apply(this.rungs[i2], i2);
-        if (!this.prewarming) this.fitResolution();
+        if (!this.prewarming) {
+          this.fitResolution(now);
+          if (changed) this.resetFrameTiming(now);
+        }
       }
       // Clamp immediately when a rung is selected. Pinned ?q=low/full modes never
       // enter frame()'s adaptive branch, so deferring this work left them at the
       // renderer's boot DPR even when it violated the selected rung.
-      fitResolution() {
+      fitResolution(now = performance.now()) {
         const R2 = this.rungs[this.rung];
         const viewportW = this.renderer.domElement?.clientWidth || globalThis.innerWidth || 1;
         const viewportH = this.renderer.domElement?.clientHeight || globalThis.innerHeight || 1;
@@ -92774,6 +92798,7 @@ var init_runtime = __esm({
         const current = this.renderer.getPixelRatio();
         const next = Math.max(floor3, Math.min(cap, current));
         if (Math.abs(next - current) <= 0.01) return;
+        this._resMovedAt = now;
         this.renderer.setPixelRatio(next);
         this.renderer.setSize(viewportW, viewportH, false);
         this.onResize?.(viewportW, viewportH);
@@ -92865,7 +92890,7 @@ var init_runtime = __esm({
         this.prewarming = false;
         this._prewarmRun = null;
         this.fitResolution();
-        this._resetFrameHistory(performance.now());
+        this.resetFrameTiming(performance.now());
       }
       // Warm-up hitches are loading samples, not evidence that gameplay is slow.
       // Reset them before the governor can turn one compile into a target resize
@@ -92877,6 +92902,22 @@ var init_runtime = __esm({
         this._slow = 0;
         this._fast = 0;
         this._resFast = 0;
+        this._frameSamples = 0;
+        this._slowSamples = 0;
+        this._hasFrameSample = false;
+      }
+      // The host calls this after visibility/wake transitions. A paused interval
+      // is neither workload evidence nor a reason to forget a failed quality probe.
+      resetFrameTiming(now = performance.now()) {
+        if (!Number.isFinite(now)) return;
+        this._resetFrameHistory(now);
+        this._resolutionProbe = null;
+      }
+      _rememberSlowResolution(ratio, now, failedRetry = false) {
+        const limit = this._resolutionLimits[this.rung];
+        limit.ceiling = Math.min(limit.ceiling, ratio);
+        limit.backoffMS = failedRetry ? Math.min(3e5, Math.max(6e4, limit.backoffMS * 2)) : Math.max(6e4, limit.backoffMS);
+        limit.retryAt = now + limit.backoffMS;
       }
       // KEEP WHAT PREWARM BUILT (swarm finding, and the standing "invisible flood"
       // report). three REF-COUNTS compiled pipelines and node-builder state, and
@@ -92911,15 +92952,38 @@ var init_runtime = __esm({
       // Call once per frame with the real frame delta; walks resolution and
       // rungs on its internal 3s cadence.
       frame(now, dtRealSec, viewportW, viewportH) {
-        const dtMs = Math.min(50, dtRealSec * 1e3);
-        this._ema += (dtMs - this._ema) * (1 - Math.exp(-dtMs / 250));
+        if (!Number.isFinite(now) || !Number.isFinite(dtRealSec) || dtRealSec <= 0) return;
+        const dpr = globalThis.devicePixelRatio || 1;
+        if (Number.isFinite(viewportW) && viewportW > 0 && Number.isFinite(viewportH) && viewportH > 0) {
+          const context3 = this._resolutionContext;
+          const changed = context3 && (Math.abs(viewportW * viewportH / (context3.width * context3.height) - 1) > 0.1 || Math.abs(dpr - context3.dpr) > 0.01);
+          if (!context3 || changed) this._resolutionContext = { width: viewportW, height: viewportH, dpr };
+          if (changed) {
+            this._resolutionLimits = this.rungs.map(() => ({ ceiling: Infinity, retryAt: 0, backoffMS: 0 }));
+            this.resetFrameTiming(now);
+            this._resMovedAt = now;
+            if (!this.prewarming) this.fitResolution(now);
+          }
+        }
+        const dtMs = dtRealSec * 1e3;
+        if (!this._hasFrameSample) {
+          this._ema = dtMs;
+          this._interval = Math.min(16.7, Math.max(3.5, dtMs));
+          this._hasFrameSample = true;
+        } else this._ema += (dtMs - this._ema) * (1 - Math.exp(-Math.min(dtMs, 250) / 250));
+        this._frameSamples++;
+        if (dtMs > 20) this._slowSamples++;
         this._interval = Math.min((this._interval ?? 16.7) + 0.01, Math.max(3.5, dtMs));
-        if (now - this._evalAt <= 3e3) return;
+        if (now - this._evalAt <= 3e3 || this._frameSamples < 3) return;
         this._evalAt = now;
+        const slowFraction = this._slowSamples / this._frameSamples;
+        const sustainedSlow = this._slowSamples >= 3 && slowFraction >= 0.35;
+        this._frameSamples = 0;
+        this._slowSamples = 0;
         const cadence = this._interval < 16 ? 16.7 : this._interval;
         const locked = this._ema <= cadence + 0.8;
         const slowCadence = cadence > 20;
-        const headroom = this._ema < 13 || locked && !slowCadence;
+        const stableDelivery = slowFraction <= 0.1 && this._ema <= 17.5 && (this._ema < 13 || locked && !slowCadence);
         if (this.pinned || this.prewarming) return;
         const R2 = this.rungs[this.rung];
         const cur = this.renderer.getPixelRatio();
@@ -92928,11 +92992,38 @@ var init_runtime = __esm({
         const cap = Math.max(floor3, Math.min(window.devicePixelRatio || 1, this.hd ? 2 : R2.res[1], budgetCap));
         let next = cur;
         const resReady = now - (this._resMovedAt ?? 0) > 9e3;
-        const wantAscend = headroom && cur < cap;
+        const wantAscend = stableDelivery && cur < cap;
+        const probe = this._resolutionProbe;
+        const limit = this._resolutionLimits[this.rung];
+        let rejectedProbe = false;
+        if (probe && sustainedSlow && this._ema > 20) {
+          this._rememberSlowResolution(cur, now, probe.retry);
+          next = Math.max(floor3, Math.min(cap, probe.from));
+          this._resolutionProbe = null;
+          rejectedProbe = true;
+        } else if (probe && now - probe.at >= 6e3) {
+          if (probe.retry && cur >= limit.ceiling - 0.01) {
+            limit.ceiling = Infinity;
+            limit.retryAt = 0;
+            limit.backoffMS = 0;
+          }
+          this._resolutionProbe = null;
+        }
         if (cur > cap + 0.01) next = cap;
-        else if (resReady && this._ema > 20 && cur > floor3) next = Math.max(floor3, cur - 0.2);
-        else if (resReady && wantAscend) {
-          if (++this._resFast >= 2) next = Math.min(cap, cur + 0.2);
+        else if (!rejectedProbe && resReady && sustainedSlow && this._ema > 20 && cur > floor3) {
+          this._rememberSlowResolution(cur, now);
+          next = Math.max(floor3, cur - 0.2);
+          this._resolutionProbe = null;
+        } else if (!rejectedProbe && !this._resolutionProbe && resReady && wantAscend) {
+          if (++this._resFast >= 2) {
+            const bounded = Math.min(cap, cur + 0.1, (cur + limit.ceiling) / 2);
+            const retry = bounded - cur < 0.02 && now >= limit.retryAt && Number.isFinite(limit.ceiling);
+            const proposal = retry ? Math.min(cap, Math.max(cur + 0.02, limit.ceiling + 0.02), cur + 0.1) : bounded;
+            if (proposal - cur > 0.01 && proposal - cur >= Math.min(0.02, cap - cur) - 1e-9) {
+              next = proposal;
+              this._resolutionProbe = { from: cur, at: now, retry };
+            }
+          }
         } else if (cur < floor3 - 0.01) next = floor3;
         if (!wantAscend) this._resFast = 0;
         if (Math.abs(next - cur) > 0.01) {
@@ -92941,24 +93032,86 @@ var init_runtime = __esm({
           this.renderer.setPixelRatio(next);
           this.renderer.setSize(viewportW, viewportH, false);
           this.onResize?.(viewportW, viewportH);
+          this._resetFrameHistory(now);
+          return;
         }
-        const catastrophic = (this._ema > 40 || slowCadence && this._ema > 30) && this.rung < this.rungs.length - 1;
-        if (catastrophic || this._ema > 24 && cur <= floor3 + 0.01 && this.rung < this.rungs.length - 1) {
+        const catastrophic = sustainedSlow && (this._ema > 40 || slowCadence && this._ema > 30) && this.rung < this.rungs.length - 1;
+        if (catastrophic || sustainedSlow && this._ema > 24 && cur <= floor3 + 0.01 && this.rung < this.rungs.length - 1) {
           if (catastrophic || ++this._slow >= 2) {
-            this.applyRung(this.rung + 1);
+            const observedMS = this._ema;
+            this.applyRung(this.rung + 1, now);
             this._slow = 0;
             this._movedAt = now;
-            console.info(`[${this.label}] quality rung -> ${this.rung} (frame ${this._ema.toFixed(1)}ms${catastrophic ? ", fast descent" : ""})`);
+            console.info(`[${this.label}] quality rung -> ${this.rung} (frame ${observedMS.toFixed(1)}ms${catastrophic ? ", fast descent" : ""})`);
           }
         } else this._slow = 0;
-        if (headroom && cur >= cap - 0.01 && this.rung > 0 && now - this._movedAt > 35e3) {
+        if (stableDelivery && cur >= cap - 0.01 && this.rung > 0 && now - this._movedAt > 35e3) {
           if (++this._fast >= 4) {
-            this.applyRung(this.rung - 1);
+            this.applyRung(this.rung - 1, now);
             this._fast = 0;
             this._movedAt = now;
-            console.info(`[${this.label}] quality rung -> ${this.rung} (headroom)`);
+            console.info(`[${this.label}] quality rung -> ${this.rung} (stable-delivery probe)`);
           }
         } else this._fast = 0;
+      }
+    };
+  }
+});
+
+// engine/frame-timing.js
+var FrameTiming;
+var init_frame_timing = __esm({
+  "engine/frame-timing.js"() {
+    FrameTiming = class {
+      constructor({ now = 0, visible = true, warmupMS = 1e3, pauseMS = 5e3, maxStepMS = 100 } = {}) {
+        for (const value of [now, warmupMS, pauseMS, maxStepMS]) {
+          if (!Number.isFinite(value)) throw new RangeError("Frame timing requires finite values.");
+        }
+        if (warmupMS < 0 || pauseMS <= 0 || maxStepMS <= 0) throw new RangeError("Invalid frame timing interval.");
+        this.warmupMS = warmupMS;
+        this.pauseMS = pauseMS;
+        this.maxStepMS = maxStepMS;
+        this.reset(now, { visible });
+      }
+      reset(now, { visible = this.visible } = {}) {
+        if (!Number.isFinite(now)) throw new RangeError("Frame timing requires a finite clock.");
+        this.last = now;
+        this.visible = visible;
+        this.warmUntil = now + this.warmupMS;
+        this.ignoreNext = true;
+        this.pauseArmed = true;
+        this.promptIntervals = 0;
+      }
+      sample(now, { visible = this.visible } = {}) {
+        if (!Number.isFinite(now)) return { simulationSeconds: 0, measurementMS: null, qualitySeconds: null, reset: false };
+        let reset = false;
+        if (visible !== this.visible || now < this.last) {
+          this.reset(now, { visible });
+          reset = true;
+        }
+        const elapsedMS = now - this.last;
+        if (!Number.isFinite(elapsedMS)) {
+          this.reset(now, { visible });
+          return { simulationSeconds: 0, measurementMS: null, qualitySeconds: null, reset: true };
+        }
+        this.last = now;
+        const simulationSeconds = Math.min(this.maxStepMS, elapsedMS) / 1e3;
+        if (visible && elapsedMS >= this.pauseMS && this.pauseArmed) {
+          this.reset(now, { visible });
+          this.pauseArmed = false;
+          reset = true;
+        }
+        if (visible && elapsedMS > 0 && elapsedMS < 250) {
+          if (++this.promptIntervals >= 2) this.pauseArmed = true;
+        } else this.promptIntervals = 0;
+        const measurable = visible && elapsedMS > 0 && !this.ignoreNext;
+        this.ignoreNext = false;
+        return {
+          simulationSeconds,
+          measurementMS: measurable ? elapsedMS : null,
+          qualitySeconds: measurable && now >= this.warmUntil ? elapsedMS / 1e3 : null,
+          reset
+        };
       }
     };
   }
@@ -93984,10 +94137,10 @@ function toggleAudioLog() {
     const out = [];
     for (let i2 = audio.cues.length - 1; i2 >= 0 && out.length < 12; i2--) {
       const c2 = audio.cues[i2];
-      const last2 = out[out.length - 1];
-      if (last2 && last2.name === c2.name && last2.far === c2.far && last2.t - c2.t < 1200) {
-        last2.n++;
-        last2.t = c2.t;
+      const last = out[out.length - 1];
+      if (last && last.name === c2.name && last.far === c2.far && last.t - c2.t < 1200) {
+        last.n++;
+        last.t = c2.t;
         continue;
       }
       out.push({ name: c2.name, far: c2.far, t: c2.t, d: c2.d, positional: c2.positional, n: 1 });
@@ -95586,10 +95739,29 @@ function placeDeathCamera(agent) {
   _fillZ = deathDesired.z;
   return anchor;
 }
+function resetFrameMeasurements(now) {
+  governor.resetFrameTiming(now);
+  _fpsEma = 0;
+  _fpsWorst = 0;
+  _fpsShownAt = 0;
+  const meter = el("fpsMeter");
+  meter.textContent = "Measuring frame cadence…";
+  _hudCache.fpsMeter = "";
+}
+function wakeFrameTiming() {
+  const now = performance.now();
+  frameTiming.reset(now, { visible: !document.hidden });
+  resetFrameMeasurements(now);
+}
+function sampleFrameTiming(now) {
+  const timing = frameTiming.sample(now, { visible: !document.hidden });
+  if (timing.reset) resetFrameMeasurements(now);
+  return timing;
+}
 function frame(now) {
   requestAnimationFrame(frame);
-  const dtReal = Math.min(0.1, (now - last) / 1e3);
-  last = now;
+  const timing = sampleFrameTiming(now);
+  const dtReal = timing.simulationSeconds;
   handleGamepad(gamepad.poll(), dtReal);
   syncAudioGate();
   physAcc += dtReal;
@@ -95990,10 +96162,10 @@ function frame(now) {
       endScreen("THE SATURN DEVOURING IS LOST", "Every other soul aboard is gone. You are alone with it now.", false);
     }
   }
-  governor.frame(now, dtReal, _vpW, _vpH);
-  {
-    const ms = dtReal * 1e3;
-    _fpsEma = _fpsEma * 0.92 + Math.min(200, ms) * 0.08;
+  if (timing.qualitySeconds !== null) governor.frame(now, timing.qualitySeconds, _vpW, _vpH);
+  if (timing.measurementMS !== null) {
+    const ms = timing.measurementMS;
+    _fpsEma = _fpsEma ? _fpsEma * 0.92 + ms * 0.08 : ms;
     if (ms > _fpsWorst) _fpsWorst = ms;
     if (now - _fpsShownAt > 250) {
       _fpsShownAt = now;
@@ -96077,7 +96249,7 @@ function gameObservation() {
     },
     performance: {
       backend: renderer.backend.isWebGPUBackend ? "webgpu" : "webgl2",
-      frameMs: Number(_fpsEma.toFixed(2)),
+      frameMs: _fpsEma ? Number(_fpsEma.toFixed(2)) : null,
       qualityRung: rung,
       renderStopped: _renderStopped,
       surfacedErrors: _fatalShown
@@ -96099,7 +96271,7 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, frameTiming, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
     init_shadow_budget();
@@ -96122,6 +96294,7 @@ var init_main = __esm({
     init_post();
     init_lights();
     init_runtime();
+    init_frame_timing();
     init_game_sync();
     init_gamepad();
     init_spore_fx();
@@ -97330,7 +97503,7 @@ var init_main = __esm({
     _bobPhase = 0;
     _bobAmp = 0;
     reloadFlashJank = 0;
-    _fpsEma = 16.7;
+    _fpsEma = 0;
     _fpsWorst = 0;
     _fpsShownAt = 0;
     ticker = new TickScheduler({ stepSec: sim.dt, run: () => sim.tick() });
@@ -97342,7 +97515,10 @@ var init_main = __esm({
     deathFocus = new Vector3();
     deathDesired = new Vector3();
     deathDirection = new Vector3();
-    last = performance.now();
+    frameTiming = new FrameTiming({ now: performance.now(), visible: !document.hidden });
+    document.addEventListener("visibilitychange", wakeFrameTiming);
+    window.addEventListener("pageshow", wakeFrameTiming);
+    resetFrameMeasurements(frameTiming.last);
     requestAnimationFrame(frame);
     window.__game = {
       sim,

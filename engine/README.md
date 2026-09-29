@@ -16,6 +16,7 @@ through constructor options and callbacks.
 | Module | What it is |
 | --- | --- |
 | `runtime.js` | The shell: `createRenderer` (WebGPU boot with automatic WebGL2 fallback when WebGPU is missing or fails to init — a browser can expose `navigator.gpu` yet not actually work on an older OS; `forceWebGL` pins WebGL2; linear-HDR + PCFSoft defaults), `installDeviceLostReload` (reload-in-place recovery with a session cap; a lost WebGPU device downgrades the reload onto WebGL2 via `?gl=1`), `QualityGovernor` (rung ladder + per-rung effects callback + whole-frame pixel budget + cancellable prewarm with force-warm/restore), `TickScheduler` (fixed-step sim ticks in coalesced MessageChannel macrotasks, off the rAF path — see `tick.js`). |
+| `frame-timing.js` | Separates bounded gameplay steps from uncapped frame-cadence measurements. Visibility changes, page restoration, and isolated suspend gaps reset measurements without hiding sustained low FPS. |
 | `post.js` | HDR post pipeline on the TSL node system: scene pass → bloom (patched `BloomNode`, mip-count parameterized) → grade (chromatic aberration, Narkowicz ACES, vignette, midtone grain, manual sRGB) → compact FXAA. One `PostFX` class; cancellable, graph-deduplicated `prewarm`, `setBloomScale`, `exposure`, `setSize`. |
 | `lights.js` | `LightPool` — a fixed pool of point lights serving unlimited *virtual* light declarations per frame (brightest-and-nearest win). Constant light count = bounded fragment cost and zero shader recompiles. Zero per-frame garbage. |
 | `fx.js` | Instanced-billboard particle FX (fire with TSL shader flames, sparks, blood decals with a ring buffer and canvas-baked smears). Camera-billboarded quads — the node renderer draws `THREE.Points` at 1px, so never use Points. |
@@ -49,6 +50,14 @@ Hard-won invariants the engine encodes (see comments at each site):
   30ms strategic tick delays at most one frame instead of every frame.
 - **Never resize render targets on the fly more than ~every 3s** — the
   governor's cadence exists so RT reallocation can't hitch play.
+- **Stable vsync is not a GPU-utilization measurement.** Resolution recovery
+  uses small probes, remembers failed sizes per rung, and backs off retries.
+  A viewport/DPR change invalidates those size limits; an ordinary wake does
+  not. Quality pins and prewarming still suppress automatic adaptation.
+- **Measure cadence separately from simulation time.** Feed the governor
+  uncapped visible-frame intervals, not the gameplay step. Reset its timing
+  history after a wake so an idle gap cannot force a downgrade. The HUD
+  reports frame cadence, not GPU execution time.
 - **Recompiles are prewarmed, then rung changes are uniform-only.** Warm-up
   is cancellable, and shared full/lite post graphs submit only once.
 - **Fixed light pool.** Adding/removing real lights recompiles every
@@ -56,6 +65,11 @@ Hard-won invariants the engine encodes (see comments at each site):
 - **Partial instanced uploads.** Upload `count × 16` floats, not the
   buffer capacity (see the host's `commitInstanced` pattern).
 - **No `THREE.Points`** on the node renderer (1px on both backends).
+
+Run `npm run quality` for deterministic resolution, wake/HUD timing, and
+GPU timestamp-readback regressions. Optional GPU timestamp tracking remains
+disabled by default; when enabled, invalid batches preserve the last valid
+result instead of publishing negative or implausible durations.
 
 ## Not yet extracted (next candidates)
 

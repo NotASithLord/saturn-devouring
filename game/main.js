@@ -26,6 +26,7 @@ import { PhysicsWorld, initRapier, PHYS_DT } from '../engine/physics/physics-wor
 import { PostFX } from '../engine/post.js';
 import { LightPool } from '../engine/lights.js';
 import { createRenderer, installDeviceLostReload, QualityGovernor, TickScheduler } from '../engine/runtime.js';
+import { FrameTiming } from '../engine/frame-timing.js';
 import { createGameSync } from '../multiplayer/game-sync.js';
 import { StandardGamepad, halo3Actions, singleActionPress } from './gamepad.js';
 import { SporeFX } from './spore-fx.js';
@@ -3475,7 +3476,7 @@ let _trackerAt = 0, _observeAt = 0, _sweepAt = 0; // subsystem throttle clocks (
 let _lightingAt = 0;
 let _smYaw = 0, _smPitch = 0, _bobPhase = 0, _bobAmp = 0; // viewmodel sway/bob (first-strike feel)
 let reloadFlashJank = 0;
-let _fpsEma = 16.7, _fpsWorst = 0, _fpsShownAt = 0; // top-right perf readout
+let _fpsEma = 0, _fpsWorst = 0, _fpsShownAt = 0; // zero means no fresh cadence sample yet
 // sim ticks run OUTSIDE the rAF task (engine/runtime.js TickScheduler):
 // the browser executes them in the idle gap between vsyncs
 const ticker = new TickScheduler({ stepSec: sim.dt, run: () => sim.tick() });
@@ -3560,7 +3561,27 @@ function placeDeathCamera(agent) {
   _fillX = deathDesired.x; _fillY = deathDesired.y; _fillZ = deathDesired.z;
   return anchor;
 }
-let last = performance.now();
+const frameTiming = new FrameTiming({ now: performance.now(), visible: !document.hidden });
+function resetFrameMeasurements(now) {
+  governor.resetFrameTiming(now);
+  _fpsEma = 0; _fpsWorst = 0; _fpsShownAt = 0;
+  const meter = el('fpsMeter');
+  meter.textContent = 'Measuring frame cadence…';
+  _hudCache.fpsMeter = '';
+}
+function wakeFrameTiming() {
+  const now = performance.now();
+  frameTiming.reset(now, { visible: !document.hidden });
+  resetFrameMeasurements(now);
+}
+document.addEventListener('visibilitychange', wakeFrameTiming);
+window.addEventListener('pageshow', wakeFrameTiming);
+resetFrameMeasurements(frameTiming.last);
+function sampleFrameTiming(now) {
+  const timing = frameTiming.sample(now, { visible: !document.hidden });
+  if (timing.reset) resetFrameMeasurements(now);
+  return timing;
+}
 function frame(now) {
   // ONE BAD FRAME MUST NOT KILL THE GAME (playtest: a first-ever hard freeze
   // with a black canvas and a live-looking HUD). The re-request used to be the
@@ -3571,8 +3592,10 @@ function frame(now) {
   // aborted frame left in the swapchain, which after a clear is black.
   // Requesting FIRST means the loop survives anything downstream.
   requestAnimationFrame(frame);
-  const dtReal = Math.min(0.1, (now - last) / 1000);
-  last = now;
+  const timing = sampleFrameTiming(now);
+  // Gameplay stays bounded after a stall; cadence evidence must not inherit
+  // that cap. Hidden/waking pages still run the existing sim/network path.
+  const dtReal = timing.simulationSeconds;
   handleGamepad(gamepad.poll(), dtReal);
   syncAudioGate();
 
@@ -4116,14 +4139,14 @@ function frame(now) {
   // viewport size from a cached value, not a per-frame read: the governor
   // consults it once every 3 s, and querying the window every frame is a
   // layout touch the frame does not need
-  governor.frame(now, dtReal, _vpW, _vpH);
+  if (timing.qualitySeconds !== null) governor.frame(now, timing.qualitySeconds, _vpW, _vpH);
 
   // PERF READOUT (user: benchmark across hardware) — live FPS + frame ms +
   // a slow-decaying worst spike + resolution/rung/backend, top right under
   // the room state. Refreshed at 4Hz, dirty-checked.
-  {
-    const ms = dtReal * 1000;
-    _fpsEma = _fpsEma * 0.92 + Math.min(200, ms) * 0.08;
+  if (timing.measurementMS !== null) {
+    const ms = timing.measurementMS;
+    _fpsEma = _fpsEma ? _fpsEma * 0.92 + ms * 0.08 : ms;
     if (ms > _fpsWorst) _fpsWorst = ms;
     if (now - _fpsShownAt > 250) {
       _fpsShownAt = now;
@@ -4241,7 +4264,7 @@ function gameObservation() {
     },
     performance: {
       backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2',
-      frameMs: Number(_fpsEma.toFixed(2)),
+      frameMs: _fpsEma ? Number(_fpsEma.toFixed(2)) : null,
       qualityRung: rung,
       renderStopped: _renderStopped,
       surfacedErrors: _fatalShown,
