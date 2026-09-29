@@ -1063,7 +1063,7 @@ export class Agents3D {
       len = Math.hypot(bwx - ox, bwz - oz) / 0.85;
     }
     const r = this.flameJets[this.flameJetN] ?? (this.flameJets[this.flameJetN] = {});
-    r.ox = ox; r.oy = oy; r.oz = oz;
+    r.ox = ox; r.oy = oy; r.oz = oz; r.deck = deck;
     r.dx = dx; r.dy = dy; r.dz = dz;
     // a stream has a range whatever it is pointed at: too short and it reads as
     // a blowtorch, too long and it is a laser

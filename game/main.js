@@ -1,3 +1,4 @@
+import { roomTransmission } from './acoustics.js';
 // HALO CHARON — 3D slice (docs/ROADMAP-3D.md): an ODST with a fireteam,
 // dropped into the ship while the FULL simulation plays out around them.
 // Mechanics layer ported from the first-strike vertical slice (MA5 loop,
@@ -465,6 +466,18 @@ function toggleMap(open = !mapOpen) {
   document.getElementById('mapview').classList.toggle('mv-hidden', !mapOpen);
 }
 const audio = new GameAudio();
+audio.transmission = (at, listener) => {
+  const listenerDeck = listener.deck ?? player.deck;
+  const sourceDeck = at.deck ?? listenerDeck;
+  const [lx, ly] = world.worldToSim(listener.x, listener.z, listenerDeck);
+  const [sx, sy] = world.worldToSim(at.x, at.z, sourceDeck);
+  const from = world.roomAt(listenerDeck, lx, ly);
+  const to = at.node ?? world.roomAt(sourceDeck, sx, sy);
+  const transmission = roomTransmission(sim.graph, from, to);
+  if (sourceDeck !== listenerDeck && transmission.cutoff > 350
+    && !sim.losClear(lx, ly, from, sx, sy, to)) return { gain: 0.16, cutoff: 350 };
+  return transmission;
+};
 canvas.addEventListener('click', () => audio.ensure());
 const audioGate = document.getElementById('audioGate');
 const ensureTrustedAudio = () => audio.ensure();
@@ -1088,7 +1101,7 @@ function updateFlameJets(dtReal) {
     const r = agents.flameJets[i];
     jets.emit(r.ox, r.oy, r.oz, r.dx, r.dy, r.dz, r.len, r.seed);
     if (Math.hypot(r.ox - player.x, r.oz - player.z) < 34) {
-      audio.play('flame', { x: r.ox, z: r.oz }, 0.7, `flame${r.seed}`, 900);
+      audio.play('flame', { x: r.ox, z: r.oz, deck: r.deck }, 0.7, `flame${r.seed}`, 900);
     }
   }
   // YOUR OWN stream rides the same pool and the same roar — one flame system
@@ -3051,7 +3064,7 @@ function drainNpcBlasts() {
       boomLight.position.set(wx, elevOf(b.deck) + 1.2, wz);
       boomLight.intensity = 60;
       shake = Math.min(1, shake + 1.0 / (1 + Math.hypot(wx - player.x, wz - player.z) / 6));
-      audio.play('boom', { x: wx, z: wz }, 1.1);
+      audio.play('boom', { x: wx, z: wz, deck: b.deck }, 1.1);
     }
   }
   q.length = 0;
@@ -3108,7 +3121,7 @@ function stepFrags(dt) {
       boomLight.position.set(p.x, elevOf(f.deck) + 1.2, p.z);
       boomLight.intensity = 60;
       shake = Math.min(1, shake + 1.2 / (1 + Math.hypot(p.x - player.x, p.z - player.z) / 6));
-      audio.play('boom', { x: p.x, z: p.z }, 1.2);
+      audio.play('boom', { x: p.x, z: p.z, deck: f.deck }, 1.2);
       scene.remove(f.mesh);
       liveFrags.splice(i, 1);
     }
@@ -3281,7 +3294,7 @@ function drawTracker(now) {
 // it). The old sweep played a one-shot PER FIRING NODE per tick — a crowded
 // fight was a wall of overlapping bangs, and adjacent-deck fire was a raw
 // 'thud'. Now: same-deck gunfire is capped at the 3 NEAREST firing rooms,
-// other decks collapse into ONE soft distant rumble, and the flood/human
+// other decks use the same attenuation plus deck muffling, and the flood/human
 // horror layer (chitter, carrier gurgle) does the storytelling.
 let chitterAt = 0, gurgleAt = 0;
 const _carrierPos = new Map();  // carrier id -> sim position last sweep (movement test)
@@ -3304,25 +3317,23 @@ function soundSweep(now) {
     if (sim.gunfireTick[n] === voiced[n] || sim.gunfireTick[n] < 5) continue;
     voiced[n] = sim.gunfireTick[n];
     const nd = g.node(n);
-    if (nd.deck === player.deck) {
+    if (nd.deck === audio.listener.deck) {
       const [wx, wz] = world.simToWorld(nd.x, nd.y, nd.deck);
-      firing.push({ n, wx, wz, d: Math.hypot(wx - player.x, wz - player.z) });
-    } else if (Math.abs(nd.deck - player.deck) <= 2) {
+      firing.push({ n, wx, wz, d: Math.hypot(wx - audio.listener.x, wz - audio.listener.z) });
+    } else if (Math.abs(nd.deck - audio.listener.deck) <= 2) {
       const [wx, wz] = world.simToWorld(nd.x, nd.y, nd.deck);
-      offDeck.push({ n, wx, wz, dd: Math.abs(nd.deck - player.deck), d: Math.hypot(wx - player.x, wz - player.z) });
+      offDeck.push({ n, wx, wz, dd: Math.abs(nd.deck - audio.listener.deck), d: Math.hypot(wx - audio.listener.x, wz - audio.listener.z) });
     }
   }
   firing.sort((a, b) => a.d - b.d);
-  for (const f of firing.slice(0, 3)) audio.play('shotFar', { x: f.wx, z: f.wz }, 0.7, `gun${f.n}`, 220);
+  for (const f of firing.slice(0, 3)) audio.play('shotFar', { x: f.wx, z: f.wz, node: f.n, deck: g.node(f.n).deck }, 0.7, `gun${f.n}`, 220);
   // battles on other decks come DIRECTIONALLY through the hull now — dull
   // thump-bursts panned to the fight's bearing, muffled harder per deck of
-  // steel (pairs with the radio net: no report may arrive, but you can still
-  // HEAR where the fight is), over the low rumble in the deckplates
+  // steel. There is no additional unpositioned rumble bypassing distance.
   offDeck.sort((a, b) => (a.dd * 100 + a.d) - (b.dd * 100 + b.d));
   for (const f of offDeck.slice(0, 2)) {
-    audio.playFar('farFight', { x: f.wx, z: f.wz }, f.dd, 0.9, `far${f.n}`, 3400);
+    audio.playFar('farFight', { x: f.wx, z: f.wz, node: f.n, deck: g.node(f.n).deck }, f.dd, 0.9, `far${f.n}`, 3400);
   }
-  if (offDeck.length) audio.play('rumble', null, 0.09, 'offdeck', 2600);
   // NO SCREAM CUES (user: "its terrible, just rip it out wholesale"). The sim
   // still tracks screamTick — it is what carries panic between rooms and puts
   // "screams coming from X" on the radio net — but nothing plays a voice for
@@ -3330,13 +3341,13 @@ function soundSweep(now) {
   // --- flood proximity (user: flood sounds when they are nearby) ---
   let nearCarrier = null;
   for (const a of sim.agents) {
-    if (a.dead || a.deck !== player.deck) continue;
+    if (a.dead || a.deck !== audio.listener.deck) continue;
     if (a.faction !== 3 && a.faction !== 4 && a.faction !== 5) continue;
     if (a.move?.hidden) continue; // in the ducts — heard via duct log, not here
     const [wx, wz] = world.simToWorld(a.x, a.y, a.deck);
-    const d = Math.hypot(wx - player.x, wz - player.z);
-    if (a.faction === 3 && d < 18 && now - chitterAt > 1600 + Math.random() * 1200) { audio.play('chitter', { x: wx, z: wz }, 0.55); chitterAt = now; }
-    if (a.faction === 5 && (!nearCarrier || d < nearCarrier.d)) nearCarrier = { wx, wz, d };
+    const d = Math.hypot(wx - audio.listener.x, wz - audio.listener.z);
+    if (a.faction === 3 && d < 18 && now - chitterAt > 1600 + Math.random() * 1200) { audio.play('chitter', { x: wx, z: wz, deck: a.deck, node: a.pnode ?? a.node }, 0.55); chitterAt = now; }
+    if (a.faction === 5 && (!nearCarrier || d < nearCarrier.d)) nearCarrier = { wx, wz, d, deck: a.deck, node: a.pnode ?? a.node };
     // CARRIER MOVEMENT (user): the bulk is audible when it WALKS. Position
     // delta between sweeps is the whole movement test — the sim's move/task
     // fields churn too much shape to lean on. Keyed per carrier so each body
@@ -3345,7 +3356,7 @@ function soundSweep(now) {
       const pv = _carrierPos.get(a.id);
       _carrierPos.set(a.id, { x: a.x, y: a.y });
       if (pv && d < 22 && Math.hypot(a.x - pv.x, a.y - pv.y) > 0.02) {
-        audio.play('carrier', { x: wx, z: wz }, 0.85, `car${a.id}`, 2400);
+        audio.play('carrier', { x: wx, z: wz, deck: a.deck, node: a.pnode ?? a.node }, 0.85, `car${a.id}`, 2400);
       }
     }
 
@@ -3354,7 +3365,7 @@ function soundSweep(now) {
   // the combat-form tracking that fed them went with them. The chitter, the
   // carrier gurgle and the gunfire carry the room now.
   if (nearCarrier && nearCarrier.d < 16 && now - gurgleAt > 3200 + Math.random() * 2500) {
-    audio.play('gurgle', { x: nearCarrier.wx, z: nearCarrier.wz }, 0.9);
+    audio.play('gurgle', { x: nearCarrier.wx, z: nearCarrier.wz, deck: nearCarrier.deck, node: nearCarrier.node }, 0.9);
     gurgleAt = now;
   }
   // (the human-death-scream sweep lived here; removed with the scream cues —
@@ -3366,9 +3377,9 @@ function soundSweep(now) {
   // around NPC clusters — this was every door any NPC tripped, ship-wide on
   // your deck, on a 120ms global throttle = constant knocking)
   for (const ev of world.doorEvents) {
-    if (ev.deck !== player.deck) continue;
-    if (Math.hypot(ev.x - player.x, ev.z - player.z) > 18) continue;
-    audio.play('door', { x: ev.x, z: ev.z }, 0.5, 'door', 600);
+    if (ev.deck !== audio.listener.deck) continue;
+    if (Math.hypot(ev.x - audio.listener.x, ev.z - audio.listener.z) > 18) continue;
+    audio.play('door', { x: ev.x, z: ev.z, deck: ev.deck }, 0.5, 'door', 600);
   }
   world.doorEvents.length = 0;
 }
@@ -3384,7 +3395,7 @@ const _doorsOnDeck = {};
 let _obstacleN = 0;
 let _obstacleKey = -1;
 function playerObstacles() {
-  const cy = elevOf(player.deck) + 0.9;
+  const cy = elevOf(audio.listener.deck) + 0.9;
   // doors on the player's deck — an NPC HOLDING in a door throat (squads
   // pack up at doors before pushing) must not wall the player out of the
   // room (user: "marines stop at a door and block me, just stuck"). You
@@ -3396,12 +3407,12 @@ function playerObstacles() {
   // loitering BESIDE the door, where they should block you normally. Test the
   // actual opening instead: within the door's width across, and a throat's
   // depth through it.
-  const deckDoors = (_doorsOnDeck[player.deck] ??= world.doors.filter((d) => d.deck === player.deck)
+  const deckDoors = (_doorsOnDeck[audio.listener.deck] ??= world.doors.filter((d) => d.deck === audio.listener.deck)
     .map((d) => ({ x: d.x, z: d.z, c: Math.cos(d.phi), s: Math.sin(d.phi) })));
   const THROAT_HALF_W = DOOR_W / 2 + 0.35, THROAT_DEPTH = 1.7;
   let n = 0;
   for (const a of sim.agents) {
-    if (a.dead || a.isPlayer || a.deck !== player.deck) continue;
+    if (a.dead || a.isPlayer || a.deck !== audio.listener.deck) continue;
     if (a.faction === 6 || a.downed || a.hp <= 0) continue;
     const [wx, wz] = world.simToWorld(a.x, a.y, a.deck);
     let inThroat = false;
@@ -3464,7 +3475,7 @@ function updateBarks(now) {
   if (!pick) return;
   const key = barkState.unspent.splice((Math.random() * barkState.unspent.length) | 0, 1)[0];
   const buf = audio.buffers[key];
-  const src = audio.play(key, { x: pick.x, z: pick.z }, 0.95);
+  const src = audio.play(key, { x: pick.x, z: pick.z, deck: pick.m.deck, node: pick.m.pnode ?? pick.m.node }, 0.95);
   if (!src) { barkState.unspent.push(key); return; }              // out of earshot / not loaded
   barkState.lastAt = now;
   barkState.active = { src, id: pick.m.id, endsAt: now + (buf ? buf.duration * 1000 : 3000) };
@@ -3765,7 +3776,7 @@ function frame(now) {
     marineMap.draw(player.agent, player.dead);
   }
   audio.setListener(renderViewX, renderViewZ,
-    deathFocusAgent ? Math.atan2(-Math.cos(deathFocusAgent.heading), -Math.sin(deathFocusAgent.heading)) : player.yaw);
+    deathFocusAgent ? Math.atan2(-Math.cos(deathFocusAgent.heading), -Math.sin(deathFocusAgent.heading)) : player.yaw, deathFocusAgent?.deck ?? player.deck);
   audio.alarm(sim.lastStand && !ended);
   if (sim.lastStand && !window._paLastStand) { window._paLastStand = true; audio.play('pa', null, 0.6); }
   audio.startAmbience(); // no-op until the AudioContext exists (first click)

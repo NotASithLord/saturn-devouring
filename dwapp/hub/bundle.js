@@ -68610,12 +68610,12 @@ var init_gamepad = __esm({
         if (actuator.effects?.length && !actuator.effects.includes("dual-rumble")) return false;
         if (actuator.type && actuator.type !== "dual-rumble") return false;
         try {
-          const clamp5 = (value) => Math.max(0, Math.min(1, Number(value) || 0));
+          const clamp6 = (value) => Math.max(0, Math.min(1, Number(value) || 0));
           const result = actuator.playEffect("dual-rumble", {
             startDelay: 0,
             duration: Math.max(0, Math.min(5e3, Number(duration) || 0)),
-            strongMagnitude: clamp5(strongMagnitude),
-            weakMagnitude: clamp5(weakMagnitude)
+            strongMagnitude: clamp6(strongMagnitude),
+            weakMagnitude: clamp6(weakMagnitude)
           });
           Promise.resolve(result).catch(() => {
           });
@@ -68953,6 +68953,40 @@ var init_protocol = __esm({
     ]);
     bytesToHex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
     hexToBytes = (hex) => Uint8Array.from(hex.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
+  }
+});
+
+// game/acoustics.js
+function roomTransmission(graph, from, to) {
+  if (from === to && from >= 0) return { gain: 1, cutoff: 2e4 };
+  const a2 = graph.nodes[from], b2 = graph.nodes[to];
+  if (!a2 || !b2) return { gain: 0.12, cutoff: 550 };
+  const decks = Math.abs(a2.deck - b2.deck);
+  if (decks) {
+    const openStair = graph.adj.std[from].some(({ to: n2, link }) => n2 === to && link.type === "stairwell");
+    return openStair ? { gain: 0.4, cutoff: 1800 } : { gain: 0.16 ** decks, cutoff: decks === 1 ? 350 : 180 };
+  }
+  let frontier = [{ node: from, gain: 1, cutoff: 2e4 }];
+  let best = { gain: 0.025, cutoff: 260 };
+  const seen = /* @__PURE__ */ new Map([[from, 1]]);
+  for (let hop = 0; hop < 4; hop++) {
+    const next = [];
+    for (const path of frontier) for (const { to: n2, link } of graph.adj.std[path.node]) {
+      if (graph.nodes[n2].deck !== a2.deck) continue;
+      const open = link.busted ? 1 : link.locked ? 0 : Math.max(0, Math.min(1, link.open01 ?? 0));
+      const gain3 = path.gain * (0.1 + 0.45 * open);
+      const cutoff = Math.min(path.cutoff, 450 + 1950 * open) * (hop ? 0.8 : 1);
+      if (n2 === to && gain3 > best.gain) best = { gain: gain3, cutoff };
+      if (gain3 <= (seen.get(n2) ?? 0) || gain3 < 0.02) continue;
+      seen.set(n2, gain3);
+      next.push({ node: n2, gain: gain3, cutoff });
+    }
+    frontier = next;
+  }
+  return best;
+}
+var init_acoustics = __esm({
+  "game/acoustics.js"() {
   }
 });
 
@@ -83393,6 +83427,7 @@ var init_agents3d = __esm({
         r2.ox = ox;
         r2.oy = oy;
         r2.oz = oz;
+        r2.deck = deck;
         r2.dx = dx;
         r2.dy = dy;
         r2.dz = dz;
@@ -85192,12 +85227,50 @@ var init_melee = __esm({
   }
 });
 
+// engine/spatial-audio.js
+function spatialMix(listener, at, volume, transmission3 = {}) {
+  if (!at) return { gain: volume, pan: 0, cutoff: 2e4 };
+  const dx = at.x - listener.x, dz = at.z - listener.z;
+  const decks = Math.abs((at.deck ?? listener.deck ?? 0) - (listener.deck ?? 0));
+  const d2 = Math.hypot(dx, dz, decks * 4);
+  const fade = clamp4((72 - d2) / 16, 0, 1);
+  const gain3 = volume * fade / (1 + (d2 / 8) ** 2) * (transmission3.gain ?? 0.16 ** decks);
+  const pan = d2 > 0.5 ? clamp4((dx * Math.cos(listener.yaw) - dz * Math.sin(listener.yaw)) / d2, -1, 1) * 0.8 : 0;
+  return { gain: gain3, pan, cutoff: Math.min(18e3 / (1 + d2 / 24), transmission3.cutoff ?? (decks ? decks === 1 ? 350 : 180 : 2e4)) };
+}
+function balanceRecording(buffer3) {
+  let energy = 0, peak = 0, count = 0;
+  for (let c2 = 0; c2 < buffer3.numberOfChannels; c2++) {
+    const data = buffer3.getChannelData(c2);
+    for (const v2 of data) {
+      energy += v2 * v2;
+      peak = Math.max(peak, Math.abs(v2));
+      count++;
+    }
+  }
+  const rms = Math.sqrt(energy / Math.max(1, count));
+  if (rms < 1e-4 || !Number.isFinite(rms)) return buffer3;
+  const gain3 = Math.min(clamp4(0.14 / rms, 0.2, 2), 0.85 / Math.max(peak, 1e-4));
+  for (let c2 = 0; c2 < buffer3.numberOfChannels; c2++) {
+    const data = buffer3.getChannelData(c2);
+    for (let i2 = 0; i2 < data.length; i2++) data[i2] *= gain3;
+  }
+  return buffer3;
+}
+var clamp4;
+var init_spatial_audio = __esm({
+  "engine/spatial-audio.js"() {
+    clamp4 = (v2, lo, hi) => Math.max(lo, Math.min(hi, v2));
+  }
+});
+
 // engine/audio.js
-var clamp4, PositionalSynth;
+var clamp5, PositionalSynth;
 var init_audio = __esm({
   "engine/audio.js"() {
-    clamp4 = (v2, a2, b2) => Math.max(a2, Math.min(b2, v2));
-    PositionalSynth = class {
+    init_spatial_audio();
+    clamp5 = (v2, a2, b2) => Math.max(a2, Math.min(b2, v2));
+    PositionalSynth = class _PositionalSynth {
       constructor() {
         this.ctx = null;
         this.master = null;
@@ -85219,7 +85292,13 @@ var init_audio = __esm({
         this.ctx = new AC();
         this.master = this.ctx.createGain();
         this.master.gain.value = 0.5;
-        this.master.connect(this.ctx.destination);
+        const limiter = this.ctx.createDynamicsCompressor();
+        limiter.threshold.value = -12;
+        limiter.knee.value = 12;
+        limiter.ratio.value = 4;
+        limiter.attack.value = 3e-3;
+        limiter.release.value = 0.18;
+        this.master.connect(limiter).connect(this.ctx.destination);
         this._bake();
       }
       // hosts override: fill this.buffers with _mk()'d samples
@@ -85242,10 +85321,8 @@ var init_audio = __esm({
           return s2 / 4294967296 - 0.5;
         };
       }
-      setListener(x2, z2, yaw) {
-        this.listener.x = x2;
-        this.listener.z = z2;
-        this.listener.yaw = yaw;
+      setListener(x2, z2, yaw, deck) {
+        Object.assign(this.listener, { x: x2, z: z2, yaw, deck });
       }
       // Play a one-shot. `at` = {x, z} world coords (null = in your ear).
       // `key` throttles repeats (per key, minimum interval).
@@ -85258,64 +85335,42 @@ var init_audio = __esm({
           if (now - (this.lastPlay[key] ?? 0) < minGapMs) return;
           this.lastPlay[key] = now;
         }
-        let gain3 = vol, pan = 0;
-        if (at) {
-          const dx = at.x - this.listener.x, dz = at.z - this.listener.z;
-          const d2 = Math.hypot(dx, dz);
-          if (d2 > 48) return;
-          gain3 = vol / (1 + d2 / 7);
-          const rightX = Math.cos(this.listener.yaw), rightZ = -Math.sin(this.listener.yaw);
-          pan = d2 > 0.5 ? clamp4((dx * rightX + dz * rightZ) / d2, -1, 1) * 0.8 : 0;
-        }
+        const { gain: gain3, pan, cutoff } = spatialMix(
+          this.listener,
+          at,
+          vol,
+          at ? this.transmission?.(at, this.listener) : void 0
+        );
+        if (gain3 < 3e-3) return;
         if (!Number.isFinite(gain3) || !Number.isFinite(pan)) return;
         const src = this.ctx.createBufferSource();
         src.buffer = buf;
         src.playbackRate.value = 0.94 + now * 7919 % 100 / 830;
-        const g2 = this.ctx.createGain();
-        g2.gain.value = clamp4(gain3, 0, 1.2);
-        const p2 = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-        if (p2) {
-          p2.pan.value = pan;
-          src.connect(g2).connect(p2).connect(this.master);
-        } else src.connect(g2).connect(this.master);
-        src.start();
-        return src;
-      }
-      // Far one-shot heard THROUGH the structure: bearing-panned like play(),
-      // but no distance cutoff — a lowpass does the physical muffling, closing
-      // down with every level of separation (deckDelta) in the way.
-      playFar(name, at, deckDelta, vol = 1, key = null, minGapMs = 2500) {
-        if (!this.ctx || this.ctx.state !== "running") return;
-        const buf = this.buffers[name];
-        if (!buf) return;
-        const now = performance.now();
-        if (key) {
-          if (now - (this.lastPlay[key] ?? 0) < minGapMs) return;
-          this.lastPlay[key] = now;
-        }
-        const dx = at.x - this.listener.x, dz = at.z - this.listener.z;
-        const d2 = Math.hypot(dx, dz);
-        const gain3 = clamp4(vol / (1 + d2 / 30 + deckDelta * 0.7), 0, 0.5);
-        if (gain3 < 0.02) return;
-        const rightX = Math.cos(this.listener.yaw), rightZ = -Math.sin(this.listener.yaw);
-        const pan = d2 > 0.5 ? clamp4((dx * rightX + dz * rightZ) / d2, -1, 1) * 0.6 : 0;
-        if (!Number.isFinite(gain3) || !Number.isFinite(pan)) return;
-        const src = this.ctx.createBufferSource();
-        src.buffer = buf;
-        src.playbackRate.value = 0.9 + now * 7919 % 100 / 500;
         const lp = this.ctx.createBiquadFilter();
         lp.type = "lowpass";
-        lp.frequency.value = deckDelta === 0 ? 900 : deckDelta === 1 ? 380 : 220;
+        lp.frequency.value = Math.min(cutoff, this.ctx.sampleRate * 0.45);
         lp.Q.value = 0.5;
         const g2 = this.ctx.createGain();
-        g2.gain.value = gain3;
+        g2.gain.value = clamp5(gain3, 0, 1.2);
         const p2 = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
         if (p2) {
-          src.connect(lp).connect(g2).connect(p2).connect(this.master);
           p2.pan.value = pan;
+          src.connect(lp).connect(g2).connect(p2).connect(this.master);
         } else src.connect(lp).connect(g2).connect(this.master);
         src.start();
         return src;
+      }
+      // Through-deck effects use the same gain curve and room filtering as
+      // nearby effects. Keep the old call signature for existing hosts.
+      playFar(name, at, deckDelta, vol = 1, key = null, minGapMs = 2500) {
+        return _PositionalSynth.prototype.play.call(
+          this,
+          name,
+          { ...at, deck: at.deck ?? (this.listener.deck ?? 0) + Math.abs(deckDelta) },
+          vol,
+          key,
+          minGapMs
+        );
       }
       // continuous tone bed: twin detuned drones (a slow beat frequency reads
       // as "machinery somewhere below") + filtered-noise air handling. Subtle —
@@ -85409,6 +85464,7 @@ var init_audio = __esm({
 var SAMPLES, MUTED, GameAudio;
 var init_audio2 = __esm({
   "game/audio.js"() {
+    init_spatial_audio();
     init_audio();
     SAMPLES = {
       boom: ["boom.wav", "boom2.wav"],
@@ -85489,7 +85545,7 @@ var init_audio2 = __esm({
                 if (!res.ok) return null;
                 bytes = await res.arrayBuffer();
               }
-              return await this.ctx.decodeAudioData(bytes);
+              return balanceRecording(await this.ctx.decodeAudioData(bytes));
             } catch {
               return null;
             }
@@ -94196,7 +94252,7 @@ function updateFlameJets(dtReal) {
     const r2 = agents.flameJets[i2];
     jets.emit(r2.ox, r2.oy, r2.oz, r2.dx, r2.dy, r2.dz, r2.len, r2.seed);
     if (Math.hypot(r2.ox - player.x, r2.oz - player.z) < 34) {
-      audio.play("flame", { x: r2.ox, z: r2.oz }, 0.7, `flame${r2.seed}`, 900);
+      audio.play("flame", { x: r2.ox, z: r2.oz, deck: r2.deck }, 0.7, `flame${r2.seed}`, 900);
     }
   }
   if (_flameJet) {
@@ -95193,7 +95249,7 @@ function drainNpcBlasts() {
       boomLight.position.set(wx, elevOf(b2.deck) + 1.2, wz);
       boomLight.intensity = 60;
       shake = Math.min(1, shake + 1 / (1 + Math.hypot(wx - player.x, wz - player.z) / 6));
-      audio.play("boom", { x: wx, z: wz }, 1.1);
+      audio.play("boom", { x: wx, z: wz, deck: b2.deck }, 1.1);
     }
   }
   q2.length = 0;
@@ -95243,7 +95299,7 @@ function stepFrags(dt) {
       boomLight.position.set(p2.x, elevOf(f2.deck) + 1.2, p2.z);
       boomLight.intensity = 60;
       shake = Math.min(1, shake + 1.2 / (1 + Math.hypot(p2.x - player.x, p2.z - player.z) / 6));
-      audio.play("boom", { x: p2.x, z: p2.z }, 1.2);
+      audio.play("boom", { x: p2.x, z: p2.z, deck: f2.deck }, 1.2);
       scene.remove(f2.mesh);
       liveFrags.splice(i2, 1);
     }
@@ -95401,59 +95457,58 @@ function soundSweep(now) {
     if (sim.gunfireTick[n2] === voiced[n2] || sim.gunfireTick[n2] < 5) continue;
     voiced[n2] = sim.gunfireTick[n2];
     const nd = g2.node(n2);
-    if (nd.deck === player.deck) {
+    if (nd.deck === audio.listener.deck) {
       const [wx, wz] = world.simToWorld(nd.x, nd.y, nd.deck);
-      firing.push({ n: n2, wx, wz, d: Math.hypot(wx - player.x, wz - player.z) });
-    } else if (Math.abs(nd.deck - player.deck) <= 2) {
+      firing.push({ n: n2, wx, wz, d: Math.hypot(wx - audio.listener.x, wz - audio.listener.z) });
+    } else if (Math.abs(nd.deck - audio.listener.deck) <= 2) {
       const [wx, wz] = world.simToWorld(nd.x, nd.y, nd.deck);
-      offDeck.push({ n: n2, wx, wz, dd: Math.abs(nd.deck - player.deck), d: Math.hypot(wx - player.x, wz - player.z) });
+      offDeck.push({ n: n2, wx, wz, dd: Math.abs(nd.deck - audio.listener.deck), d: Math.hypot(wx - audio.listener.x, wz - audio.listener.z) });
     }
   }
   firing.sort((a2, b2) => a2.d - b2.d);
-  for (const f2 of firing.slice(0, 3)) audio.play("shotFar", { x: f2.wx, z: f2.wz }, 0.7, `gun${f2.n}`, 220);
+  for (const f2 of firing.slice(0, 3)) audio.play("shotFar", { x: f2.wx, z: f2.wz, node: f2.n, deck: g2.node(f2.n).deck }, 0.7, `gun${f2.n}`, 220);
   offDeck.sort((a2, b2) => a2.dd * 100 + a2.d - (b2.dd * 100 + b2.d));
   for (const f2 of offDeck.slice(0, 2)) {
-    audio.playFar("farFight", { x: f2.wx, z: f2.wz }, f2.dd, 0.9, `far${f2.n}`, 3400);
+    audio.playFar("farFight", { x: f2.wx, z: f2.wz, node: f2.n, deck: g2.node(f2.n).deck }, f2.dd, 0.9, `far${f2.n}`, 3400);
   }
-  if (offDeck.length) audio.play("rumble", null, 0.09, "offdeck", 2600);
   let nearCarrier = null;
   for (const a2 of sim.agents) {
-    if (a2.dead || a2.deck !== player.deck) continue;
+    if (a2.dead || a2.deck !== audio.listener.deck) continue;
     if (a2.faction !== 3 && a2.faction !== 4 && a2.faction !== 5) continue;
     if (a2.move?.hidden) continue;
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
-    const d2 = Math.hypot(wx - player.x, wz - player.z);
+    const d2 = Math.hypot(wx - audio.listener.x, wz - audio.listener.z);
     if (a2.faction === 3 && d2 < 18 && now - chitterAt > 1600 + Math.random() * 1200) {
-      audio.play("chitter", { x: wx, z: wz }, 0.55);
+      audio.play("chitter", { x: wx, z: wz, deck: a2.deck, node: a2.pnode ?? a2.node }, 0.55);
       chitterAt = now;
     }
-    if (a2.faction === 5 && (!nearCarrier || d2 < nearCarrier.d)) nearCarrier = { wx, wz, d: d2 };
+    if (a2.faction === 5 && (!nearCarrier || d2 < nearCarrier.d)) nearCarrier = { wx, wz, d: d2, deck: a2.deck, node: a2.pnode ?? a2.node };
     if (a2.faction === 5) {
       const pv = _carrierPos.get(a2.id);
       _carrierPos.set(a2.id, { x: a2.x, y: a2.y });
       if (pv && d2 < 22 && Math.hypot(a2.x - pv.x, a2.y - pv.y) > 0.02) {
-        audio.play("carrier", { x: wx, z: wz }, 0.85, `car${a2.id}`, 2400);
+        audio.play("carrier", { x: wx, z: wz, deck: a2.deck, node: a2.pnode ?? a2.node }, 0.85, `car${a2.id}`, 2400);
       }
     }
   }
   if (nearCarrier && nearCarrier.d < 16 && now - gurgleAt > 3200 + Math.random() * 2500) {
-    audio.play("gurgle", { x: nearCarrier.wx, z: nearCarrier.wz }, 0.9);
+    audio.play("gurgle", { x: nearCarrier.wx, z: nearCarrier.wz, deck: nearCarrier.deck, node: nearCarrier.node }, 0.9);
     gurgleAt = now;
   }
   for (const ev of world.doorEvents) {
-    if (ev.deck !== player.deck) continue;
-    if (Math.hypot(ev.x - player.x, ev.z - player.z) > 18) continue;
-    audio.play("door", { x: ev.x, z: ev.z }, 0.5, "door", 600);
+    if (ev.deck !== audio.listener.deck) continue;
+    if (Math.hypot(ev.x - audio.listener.x, ev.z - audio.listener.z) > 18) continue;
+    audio.play("door", { x: ev.x, z: ev.z, deck: ev.deck }, 0.5, "door", 600);
   }
   world.doorEvents.length = 0;
 }
 function playerObstacles() {
-  const cy = elevOf(player.deck) + 0.9;
-  const deckDoors = _doorsOnDeck[player.deck] ??= world.doors.filter((d2) => d2.deck === player.deck).map((d2) => ({ x: d2.x, z: d2.z, c: Math.cos(d2.phi), s: Math.sin(d2.phi) }));
+  const cy = elevOf(audio.listener.deck) + 0.9;
+  const deckDoors = _doorsOnDeck[audio.listener.deck] ??= world.doors.filter((d2) => d2.deck === audio.listener.deck).map((d2) => ({ x: d2.x, z: d2.z, c: Math.cos(d2.phi), s: Math.sin(d2.phi) }));
   const THROAT_HALF_W = DOOR_W / 2 + 0.35, THROAT_DEPTH = 1.7;
   let n2 = 0;
   for (const a2 of sim.agents) {
-    if (a2.dead || a2.isPlayer || a2.deck !== player.deck) continue;
+    if (a2.dead || a2.isPlayer || a2.deck !== audio.listener.deck) continue;
     if (a2.faction === 6 || a2.downed || a2.hp <= 0) continue;
     const [wx, wz] = world.simToWorld(a2.x, a2.y, a2.deck);
     let inThroat = false;
@@ -95512,7 +95567,7 @@ function updateBarks(now) {
   if (!pick) return;
   const key = barkState.unspent.splice(Math.random() * barkState.unspent.length | 0, 1)[0];
   const buf = audio.buffers[key];
-  const src = audio.play(key, { x: pick.x, z: pick.z }, 0.95);
+  const src = audio.play(key, { x: pick.x, z: pick.z, deck: pick.m.deck, node: pick.m.pnode ?? pick.m.node }, 0.95);
   if (!src) {
     barkState.unspent.push(key);
     return;
@@ -95742,7 +95797,8 @@ function frame(now) {
   audio.setListener(
     renderViewX,
     renderViewZ,
-    deathFocusAgent ? Math.atan2(-Math.cos(deathFocusAgent.heading), -Math.sin(deathFocusAgent.heading)) : player.yaw
+    deathFocusAgent ? Math.atan2(-Math.cos(deathFocusAgent.heading), -Math.sin(deathFocusAgent.heading)) : player.yaw,
+    deathFocusAgent?.deck ?? player.deck
   );
   audio.alarm(sim.lastStand && !ended);
   if (sim.lastStand && !window._paLastStand) {
@@ -96102,6 +96158,7 @@ async function pulseAgentKey(code3, duration = 120) {
 var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
+    init_acoustics();
     init_shadow_budget();
     init_three_webgpu_module();
     init_sim();
@@ -96375,6 +96432,17 @@ var init_main = __esm({
     }
     mapOpen = false;
     audio = new GameAudio();
+    audio.transmission = (at, listener) => {
+      const listenerDeck = listener.deck ?? player.deck;
+      const sourceDeck = at.deck ?? listenerDeck;
+      const [lx, ly] = world.worldToSim(listener.x, listener.z, listenerDeck);
+      const [sx, sy] = world.worldToSim(at.x, at.z, sourceDeck);
+      const from = world.roomAt(listenerDeck, lx, ly);
+      const to = at.node ?? world.roomAt(sourceDeck, sx, sy);
+      const transmission3 = roomTransmission(sim.graph, from, to);
+      if (sourceDeck !== listenerDeck && transmission3.cutoff > 350 && !sim.losClear(lx, ly, from, sx, sy, to)) return { gain: 0.16, cutoff: 350 };
+      return transmission3;
+    };
     canvas.addEventListener("click", () => audio.ensure());
     audioGate = document.getElementById("audioGate");
     ensureTrustedAudio = () => audio.ensure();

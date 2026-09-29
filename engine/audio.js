@@ -1,3 +1,4 @@
+import { spatialMix } from './spatial-audio.js';
 // FTL ENGINE · audio — synthesized positional audio with zero assets.
 // The engine owns the harness: AudioContext lifecycle (resumed on the
 // first user gesture via ensure()), a master bus, bearing-panned and
@@ -28,7 +29,11 @@ export class PositionalSynth {
     this.ctx = new AC();
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.5;
-    this.master.connect(this.ctx.destination);
+    // Keep simultaneous nearby effects from overloading the master bus.
+    const limiter = this.ctx.createDynamicsCompressor();
+    limiter.threshold.value = -12; limiter.knee.value = 12; limiter.ratio.value = 4;
+    limiter.attack.value = 0.003; limiter.release.value = 0.18;
+    this.master.connect(limiter).connect(this.ctx.destination);
     this._bake();
   }
 
@@ -51,7 +56,7 @@ export class PositionalSynth {
     return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 - 0.5; };
   }
 
-  setListener(x, z, yaw) { this.listener.x = x; this.listener.z = z; this.listener.yaw = yaw; }
+  setListener(x, z, yaw, deck) { Object.assign(this.listener, { x, z, yaw, deck }); }
 
   // Play a one-shot. `at` = {x, z} world coords (null = in your ear).
   // `key` throttles repeats (per key, minimum interval).
@@ -64,62 +69,29 @@ export class PositionalSynth {
       if (now - (this.lastPlay[key] ?? 0) < minGapMs) return;
       this.lastPlay[key] = now;
     }
-    let gain = vol, pan = 0;
-    if (at) {
-      const dx = at.x - this.listener.x, dz = at.z - this.listener.z;
-      const d = Math.hypot(dx, dz);
-      if (d > 48) return;
-      gain = vol / (1 + d / 7);
-      // pan by the source's bearing relative to the camera
-      const rightX = Math.cos(this.listener.yaw), rightZ = -Math.sin(this.listener.yaw);
-      pan = d > 0.5 ? clamp((dx * rightX + dz * rightZ) / d, -1, 1) * 0.8 : 0;
-    }
+    const { gain, pan, cutoff } = spatialMix(this.listener, at, vol,
+      at ? this.transmission?.(at, this.listener) : undefined);
+    if (gain < 0.003) return;
     if (!Number.isFinite(gain) || !Number.isFinite(pan)) return; // never feed NaN to an AudioParam
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = 0.94 + ((now * 7919) % 100) / 830; // tiny human variation
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = Math.min(cutoff, this.ctx.sampleRate * 0.45); lp.Q.value = 0.5;
     const g = this.ctx.createGain();
     g.gain.value = clamp(gain, 0, 1.2);
     const p = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-    if (p) { p.pan.value = pan; src.connect(g).connect(p).connect(this.master); }
-    else src.connect(g).connect(this.master);
+    if (p) { p.pan.value = pan; src.connect(lp).connect(g).connect(p).connect(this.master); }
+    else src.connect(lp).connect(g).connect(this.master);
     src.start();
     return src; // callers that need to cut a one-shot short (a speaker dying mid-line)
   }
 
-  // Far one-shot heard THROUGH the structure: bearing-panned like play(),
-  // but no distance cutoff — a lowpass does the physical muffling, closing
-  // down with every level of separation (deckDelta) in the way.
+  // Through-deck effects use the same gain curve and room filtering as
+  // nearby effects. Keep the old call signature for existing hosts.
   playFar(name, at, deckDelta, vol = 1, key = null, minGapMs = 2500) {
-    if (!this.ctx || this.ctx.state !== 'running') return;
-    const buf = this.buffers[name];
-    if (!buf) return;
-    const now = performance.now();
-    if (key) {
-      if (now - (this.lastPlay[key] ?? 0) < minGapMs) return;
-      this.lastPlay[key] = now;
-    }
-    const dx = at.x - this.listener.x, dz = at.z - this.listener.z;
-    const d = Math.hypot(dx, dz);
-    const gain = clamp(vol / (1 + d / 30 + deckDelta * 0.7), 0, 0.5);
-    if (gain < 0.02) return;
-    const rightX = Math.cos(this.listener.yaw), rightZ = -Math.sin(this.listener.yaw);
-    const pan = d > 0.5 ? clamp((dx * rightX + dz * rightZ) / d, -1, 1) * 0.6 : 0;
-    if (!Number.isFinite(gain) || !Number.isFinite(pan)) return;
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.playbackRate.value = 0.9 + ((now * 7919) % 100) / 500;
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = deckDelta === 0 ? 900 : deckDelta === 1 ? 380 : 220;
-    lp.Q.value = 0.5;
-    const g = this.ctx.createGain();
-    g.gain.value = gain;
-    const p = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-    if (p) { src.connect(lp).connect(g).connect(p).connect(this.master); p.pan.value = pan; }
-    else src.connect(lp).connect(g).connect(this.master);
-    src.start();
-    return src; // same contract as play(): the source, or nothing if it never sounded
+    return PositionalSynth.prototype.play.call(this, name, { ...at, deck: at.deck ?? (this.listener.deck ?? 0) + Math.abs(deckDelta) },
+      vol, key, minGapMs);
   }
 
   // continuous tone bed: twin detuned drones (a slow beat frequency reads

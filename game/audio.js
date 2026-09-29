@@ -4,6 +4,7 @@
 // GAME's sound: a procedural fallback bank plus raw packaged recordings that
 // are decoded at first user gesture.
 
+import { balanceRecording } from '../engine/spatial-audio.js';
 import { PositionalSynth } from '../engine/audio.js';
 
 // REAL FLOOD AUDIO (user sound audit): the procedural stand-ins here were
@@ -100,7 +101,7 @@ export class GameAudio extends PositionalSynth {
             if (!res.ok) return null;
             bytes = await res.arrayBuffer();
           }
-          return await this.ctx.decodeAudioData(bytes);
+          return balanceRecording(await this.ctx.decodeAudioData(bytes));
         } catch { return null; } // keep whatever is already in the bank
       }))).filter(Boolean);
       if (bufs.length) { this.buffers[key] = bufs[0]; this._alts[key] = bufs; }
