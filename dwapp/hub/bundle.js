@@ -85422,25 +85422,6 @@ var init_audio2 = __esm({
       bark2: ["bark2.wav"],
       bark3: ["bark3.wav"],
       bark4: ["bark4.wav"],
-      // THE BODY BECOMING SOMETHING ELSE (user): played once per conversion, at
-      // the MIDDLE of the convulsion rather than its start — the thrash is already
-      // running by then, so the sound lands on the worst of it instead of
-      // announcing it. Five takes, picked at random (see play()'s _alts).
-      // (These replaced the first morph set — "use these for human reanimation
-      // actually" — same cue, better recordings.)
-      reanim: ["reanim1.wav", "reanim2.wav", "reanim3.wav", "reanim4.wav", "reanim5.wav"],
-      // a combat form coming apart. Five takes so a firefight against a pack does
-      // not machine-gun the same wet crack.
-      gib: ["gib1.wav", "gib2.wav", "gib3.wav", "gib4.wav", "gib5.wav"],
-      // THE LOCK-ON (user: "use more frequently for combat forms who lock on and
-      // start moving to attack"): a combat form voices the moment it starts its
-      // sprint at prey. Five takes; a frequent cue, throttled in the sweep, not here.
-      aggro: ["aggro1.wav", "aggro2.wav", "aggro3.wav", "aggro4.wav", "aggro5.wav"],
-      // THE JUMP SCARE (user): one take, "only used very rarely and sparingly" —
-      // when the player's own room has flood pouring in and the bodies in it are
-      // outnumbered 2:1 — "and even then not always", and AT MOST ONCE A GAME.
-      // The once-per-run latch and the dice both live in main.js's scare director.
-      scare: ["scare.wav"],
       // CARRIER MOVEMENT (user): the bloated form on the move — wet, heavy bulk.
       // Five takes, voiced per carrier while it is actually walking, alongside the
       // stationary gurgle.
@@ -95455,31 +95436,12 @@ function soundSweep(now) {
       chitterAt = now;
     }
     if (a2.faction === 5 && (!nearCarrier || d2 < nearCarrier.d)) nearCarrier = { wx, wz, d: d2 };
-    if (a2.transformingUntil !== void 0 && d2 < 30 && !_morphed.has(a2.id)) {
-      const mid = a2.transformingUntil - sim.P.combat.thrashSec * 0.5;
-      if (sim.t >= mid) {
-        _morphed.add(a2.id);
-        audio.play("reanim", { x: wx, z: wz }, 0.95);
-      }
-    }
-    if (a2.faction === 4 && a2.charging && !a2.downed && d2 < 30) {
-      const last2 = _aggroAt.get(a2.id) ?? -1e9;
-      if (now - last2 > 9e3 && now - aggroGlobalAt > 650) {
-        _aggroAt.set(a2.id, now);
-        aggroGlobalAt = now;
-        audio.play("aggro", { x: wx, z: wz }, 0.9);
-      }
-    }
     if (a2.faction === 5) {
       const pv = _carrierPos.get(a2.id);
       _carrierPos.set(a2.id, { x: a2.x, y: a2.y });
       if (pv && d2 < 22 && Math.hypot(a2.x - pv.x, a2.y - pv.y) > 0.02) {
         audio.play("carrier", { x: wx, z: wz }, 0.85, `car${a2.id}`, 2400);
       }
-    }
-    if (a2.faction === 4 && a2.downed && !_gibbed.has(a2.id)) {
-      _gibbed.add(a2.id);
-      if (d2 < 34) audio.play("gib", { x: wx, z: wz }, 1);
     }
   }
   if (nearCarrier && nearCarrier.d < 16 && now - gurgleAt > 3200 + Math.random() * 2500) {
@@ -95565,36 +95527,6 @@ function updateBarks(now) {
   }
   barkState.lastAt = now;
   barkState.active = { src, id: pick.m.id, endsAt: now + (buf ? buf.duration * 1e3 : 3e3) };
-}
-function updateScare(now) {
-  if (scareState.spent || now < scareState.checkAt) return;
-  scareState.checkAt = now + 900;
-  const pa = player.agent;
-  if (pa.dead || pa.hp <= 0) return;
-  let marinesAlive = 0;
-  for (const a2 of sim.agents) {
-    if (a2.faction === 2 && !a2.dead && a2.hp > 0 && !a2.isPlayer && !a2.fromPlayer) marinesAlive++;
-  }
-  if (marinesAlive > scareState.marines0 * 0.3) return;
-  const room = pa.pnode ?? pa.node;
-  let flood = 0, humans = 1;
-  for (const a2 of sim.agents) {
-    if (a2.dead || a2.hp <= 0 || (a2.pnode ?? a2.node) !== room) continue;
-    if (a2.move?.hidden) continue;
-    if (a2.faction === 3 || a2.faction === 4 || a2.faction === 5) flood++;
-    else if (a2.faction === 2 && a2.id !== pa.id) humans++;
-  }
-  const h2 = scareState.hist;
-  if (h2.length && h2[h2.length - 1].room !== room) h2.length = 0;
-  h2.push({ t: now, room, flood });
-  while (h2.length && now - h2[0].t > 6e3) h2.shift();
-  const pouring = h2.length >= 2 && flood - h2[0].flood >= 2;
-  const eligible = pouring && flood >= humans * 2;
-  if (eligible && !scareState.eligible && Math.random() < 0.4) {
-    scareState.spent = true;
-    audio.play("scare", null, 1);
-  }
-  scareState.eligible = eligible;
 }
 function updateAfterlife(now) {
   const hud = el("spectatorHud");
@@ -95883,7 +95815,6 @@ function frame(now) {
   world.setExteriorView(camera.position.x, camera.position.y, camera.position.z, !inFog);
   world.setActiveVolume(povDeck, povX);
   updateBarks(now);
-  updateScare(now);
   lightPool.frame();
   syncBurnFires();
   fire.update(dtReal, povX, povZ, elevOf(povDeck));
@@ -96177,7 +96108,7 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _morphed, _gibbed, aggroGlobalAt, _aggroAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, scareState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, last, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
     init_shadow_budget();
@@ -97389,10 +97320,6 @@ var init_main = __esm({
     trkState = { static: false, until: 0, phantoms: [], nextPhantom: 0 };
     chitterAt = 0;
     gurgleAt = 0;
-    _morphed = /* @__PURE__ */ new Set();
-    _gibbed = /* @__PURE__ */ new Set();
-    aggroGlobalAt = 0;
-    _aggroAt = /* @__PURE__ */ new Map();
     _carrierPos = /* @__PURE__ */ new Map();
     _gunVoiced = null;
     _obstacleR = { 3: 0.32, 4: 0.48, 5: 0.75 };
@@ -97402,15 +97329,6 @@ var init_main = __esm({
     _obstacleKey = -1;
     BARK_KEYS = ["bark1", "bark2", "bark3", "bark4"];
     barkState = { unspent: BARK_KEYS.slice(), active: null, lastAt: -1e9, checkAt: 0 };
-    scareState = {
-      spent: false,
-      eligible: false,
-      checkAt: 0,
-      hist: [],
-      // captured at module eval — the sim exists and no tick has run, so every
-      // marine the ship will ever have is alive right now (none are minted later)
-      marines0: shipMarines0
-    };
     physAcc = 0;
     _trackerAt = 0;
     _observeAt = 0;

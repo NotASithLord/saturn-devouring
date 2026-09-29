@@ -3288,12 +3288,6 @@ function drawTracker(now) {
 // other decks collapse into ONE soft distant rumble, and the flood/human
 // horror layer (chitter, carrier gurgle) does the storytelling.
 let chitterAt = 0, gurgleAt = 0;
-// one-shot ledgers: both cues fire on a CONDITION that stays true for seconds,
-// and the sweep re-reads it ~15x a second. Ids are never reused within a run,
-// so these only grow by one per body and need no eviction.
-const _morphed = new Set(), _gibbed = new Set();
-let aggroGlobalAt = 0;
-const _aggroAt = new Map();     // combat form id -> when its lock-on last voiced
 const _carrierPos = new Map();  // carrier id -> sim position last sweep (movement test)
 let _gunVoiced = null; // per-room gunfire stamp already voiced (edge trigger)
 function soundSweep(now) {
@@ -3347,30 +3341,6 @@ function soundSweep(now) {
     const d = Math.hypot(wx - player.x, wz - player.z);
     if (a.faction === 3 && d < 18 && now - chitterAt > 1600 + Math.random() * 1200) { audio.play('chitter', { x: wx, z: wz }, 0.55); chitterAt = now; }
     if (a.faction === 5 && (!nearCarrier || d < nearCarrier.d)) nearCarrier = { wx, wz, d };
-    // THE CONVERSION, VOICED AT ITS MIDPOINT (user: "in the middle of the
-    // timeslot"). transformingUntil is the END of the thrash, so the middle is
-    // half a thrashSec back from it. Fired once per body — the sweep runs at
-    // ~15 Hz and the window is seconds wide, so it needs the id set to not
-    // retrigger every pass.
-    if (a.transformingUntil !== undefined && d < 30 && !_morphed.has(a.id)) {
-      const mid = a.transformingUntil - sim.P.combat.thrashSec * 0.5;
-      if (sim.t >= mid) { _morphed.add(a.id); audio.play('reanim', { x: wx, z: wz }, 0.95); }
-    }
-    // THE LOCK-ON (user: "use more frequently for combat forms who lock on
-    // and start moving to attack"): voiced on the sprint. The sim raises
-    // `charging` the moment a form starts its run at prey and drops it at
-    // melee range, so it flickers in a scuffle — a per-form recool keeps one
-    // form from re-voicing its own brawl, and a short global gap keeps a
-    // pack's simultaneous lock-on from stacking into a single wall of sound
-    // (staggered snarls read as MORE of them, not louder). A chase longer
-    // than the recool re-voices — it is still coming.
-    if (a.faction === 4 && a.charging && !a.downed && d < 30) {
-      const last = _aggroAt.get(a.id) ?? -1e9;
-      if (now - last > 9000 && now - aggroGlobalAt > 650) {
-        _aggroAt.set(a.id, now); aggroGlobalAt = now;
-        audio.play('aggro', { x: wx, z: wz }, 0.9);
-      }
-    }
     // CARRIER MOVEMENT (user): the bulk is audible when it WALKS. Position
     // delta between sweeps is the whole movement test — the sim's move/task
     // fields churn too much shape to lean on. Keyed per carrier so each body
@@ -3382,12 +3352,7 @@ function soundSweep(now) {
         audio.play('carrier', { x: wx, z: wz }, 0.85, `car${a.id}`, 2400);
       }
     }
-    // a combat form coming apart. hurtFloodForm never sets `dead` on one — it
-    // leaves hp 0 / downed true — so the death to voice is the DOWNED edge.
-    if (a.faction === 4 && a.downed && !_gibbed.has(a.id)) {
-      _gibbed.add(a.id);
-      if (d < 34) audio.play('gib', { x: wx, z: wz }, 1.0);
-    }
+
   }
   // NO GROWLS, NO SHRIEKS (user: "remove shrieks and growls wholesale") —
   // the combat-form tracking that fed them went with them. The chitter, the
@@ -3508,65 +3473,6 @@ function updateBarks(now) {
   barkState.lastAt = now;
   barkState.active = { src, id: pick.m.id, endsAt: now + (buf ? buf.duration * 1000 : 3000) };
 }
-
-// --- THE JUMP SCARE ---------------------------------------------------------
-// (user: "a fun jump scare one only used very rarely and sparingly,
-// specifically when you the player are in a room with flood pouring in and
-// are outnumbered with any marines 2 - 1, and even then not always" — "and at
-// most once a game".)
-//
-// Eligibility is EDGE-TRIGGERED: the moment the player's room tips into
-// "pouring in + outnumbered 2:1", ONE die is rolled. Fail, and that assault
-// stays silent for good — the condition must fully clear and rebuild before
-// another roll. Pass, and the sting fires and the once-per-run latch closes
-// the book. "Pouring in" means the live flood headcount in the room grew by
-// 2+ inside the last six seconds — a pack you walked in on is an ambush of
-// your own making, not an inrush, and doesn't qualify.
-// ...and (user, second condition): the sting is a LATE-GAME sound — at least
-// 70% of the ship's marines must already be dead. Early assaults, however
-// dire your own room looks, stay silent: the scream belongs to a ship that
-// has already lost its fighting strength. Initial count captured at boot
-// (all marines exist at t0; none are ever minted later), garrison and ODSTs
-// included — "the marines" means every rifle the ship started with.
-const scareState = {
-  spent: false, eligible: false, checkAt: 0, hist: [],
-  // captured at module eval — the sim exists and no tick has run, so every
-  // marine the ship will ever have is alive right now (none are minted later)
-  marines0: shipMarines0,
-};
-function updateScare(now) {
-  if (scareState.spent || now < scareState.checkAt) return;
-  scareState.checkAt = now + 900;
-  const pa = player.agent;
-  if (pa.dead || pa.hp <= 0) return;
-  let marinesAlive = 0;
-  for (const a of sim.agents) {
-    if (a.faction === 2 && !a.dead && a.hp > 0 && !a.isPlayer && !a.fromPlayer) marinesAlive++;
-  }
-  if (marinesAlive > scareState.marines0 * 0.3) return; // fewer than 70% dead — not eligible yet
-  const room = pa.pnode ?? pa.node;
-  let flood = 0, humans = 1; // you count
-  for (const a of sim.agents) {
-    if (a.dead || a.hp <= 0 || (a.pnode ?? a.node) !== room) continue;
-    if (a.move?.hidden) continue; // in the ducts is not in the room
-    if (a.faction === 3 || a.faction === 4 || a.faction === 5) flood++;
-    else if (a.faction === 2 && a.id !== pa.id) humans++; // "with any marines"
-  }
-  // headcount history for THIS room only — changing rooms restarts the clock,
-  // so sprinting INTO a hot room can't read as the room filling up around you
-  const h = scareState.hist;
-  if (h.length && h[h.length - 1].room !== room) h.length = 0;
-  h.push({ t: now, room, flood });
-  while (h.length && now - h[0].t > 6000) h.shift();
-  const pouring = h.length >= 2 && flood - h[0].flood >= 2;
-  const eligible = pouring && flood >= humans * 2;
-  if (eligible && !scareState.eligible && Math.random() < 0.4) {
-    scareState.spent = true;
-    audio.play('scare', null, 1.0); // in your head, not in the room — a sting
-  }
-  scareState.eligible = eligible;
-}
-
 // --- main loop ---
 let physAcc = 0;
 let _trackerAt = 0, _observeAt = 0, _sweepAt = 0; // subsystem throttle clocks (perf pass 2)
@@ -3973,7 +3879,6 @@ function frame(now) {
   // ±1 and fore/aft thirds beyond full fog are hidden — both pixel-exact
   world.setActiveVolume(povDeck, povX);
   updateBarks(now);
-  updateScare(now);
   lightPool.frame(); // all dynamic sources re-declare below
   syncBurnFires();
   fire.update(dtReal, povX, povZ, elevOf(povDeck));
