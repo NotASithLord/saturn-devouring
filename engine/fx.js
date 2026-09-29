@@ -97,7 +97,10 @@ function flameMaterial() {
     st.y.addAssign(sqrt(st.y.max(0)).mul(1.24).mul(turbulence(p)));
     const outside = st.x.lessThanEqual(0).or(st.x.greaterThanEqual(1))
       .or(st.y.lessThanEqual(0)).or(st.y.greaterThanEqual(1));
-    return select(outside, vec4(0), texture(profile, st));
+    const sample = texture(profile, st).toVar();
+    // The generated profile stores bright RGB even where density/alpha is
+    // zero. Premultiply each march sample or the empty box walls glow.
+    return select(outside, vec4(0), vec4(sample.rgb.mul(sample.a), sample.a));
   });
   const mat = new THREE.MeshBasicNodeMaterial({
     transparent: true, depthWrite: false, depthTest: true,
@@ -105,7 +108,10 @@ function flameMaterial() {
   });
   mat.colorNode = Fn(() => {
     const ray = vec3(positionWorld).toVar();
-    const direction = normalize(ray.sub(cameraPosition));
+    // Start on the box's back faces and march toward the viewer, through the
+    // flame. Marching away from the viewer exited the box immediately, which
+    // left crash-site flames invisible while their lights kept glowing.
+    const direction = normalize(cameraPosition.sub(ray));
     const step = float(0.045).mul(length(modelScale));
     const color = vec4(0).toVar();
     Loop(12, () => {

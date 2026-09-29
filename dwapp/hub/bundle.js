@@ -85836,7 +85836,8 @@ function flameMaterial() {
     p2.assign(p2.mul(vec32(1.1, 2.1, 1.1)));
     st.y.addAssign(sqrt2(st.y.max(0)).mul(1.24).mul(turbulence(p2)));
     const outside = st.x.lessThanEqual(0).or(st.x.greaterThanEqual(1)).or(st.y.lessThanEqual(0)).or(st.y.greaterThanEqual(1));
-    return select2(outside, vec42(0), texture2(profile, st));
+    const sample3 = texture2(profile, st).toVar();
+    return select2(outside, vec42(0), vec42(sample3.rgb.mul(sample3.a), sample3.a));
   });
   const mat = new MeshBasicNodeMaterial({
     transparent: true,
@@ -85848,7 +85849,7 @@ function flameMaterial() {
   });
   mat.colorNode = Fn2(() => {
     const ray = vec32(positionWorld2).toVar();
-    const direction = normalize3(ray.sub(cameraPosition2));
+    const direction = normalize3(cameraPosition2.sub(ray));
     const step3 = float2(0.045).mul(length2(modelScale2));
     const color3 = vec42(0).toVar();
     Loop2(12, () => {
