@@ -1,4 +1,4 @@
-# Charon
+# Charon (Saturn Devouring)
 
 Charon is a browser-native systemic survival game aboard the UNSC *Saturn
 Devouring*. The ship simulation continues with or without the player: marines
@@ -165,3 +165,21 @@ screens, and contextual prompts are controller-aware.
 
 The launcher and developer docs are keyboard and controller navigable. Voice
 can be muted in the lobby or from the in-game network HUD.
+
+## License and Halo notice
+
+Original project code and technical documentation are licensed under the
+[MIT License](LICENSE), subject to the scope in
+[Third-party notices](THIRD_PARTY_NOTICES.md). Halo content, game assets, and
+third-party dependencies are excluded from that grant. The assembled fan game
+is not licensed as an unrestricted commercial MIT game.
+
+Halo: Combat Evolved, Halo 2, and Halo 3 © Microsoft Corporation.
+Charon (Saturn Devouring) was created under Microsoft's
+[Game Content Usage Rules](https://www.xbox.com/en-us/developers/rules)
+using assets from Halo: Combat Evolved, Halo 2, and Halo 3, and it is not
+endorsed by or affiliated with Microsoft.
+
+Asset provenance and redistribution permissions still need verification;
+see the [asset-rights review](docs/ASSET-RIGHTS.md). This notice is not a claim
+of Microsoft approval or a substitute for asset permissions.
