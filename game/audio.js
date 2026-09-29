@@ -132,9 +132,6 @@ export class GameAudio extends PositionalSynth {
       const c = (t * 19) % 1; // click phase: sharp attack, fast dry decay
       return rnd() * (c < 0.12 ? 1 : 0) * Math.exp(-c * 40) * 0.6;
     });
-    // melee thud
-    this.buffers.thud = mk(0.25, (t) =>
-      Math.sin(t * 2 * Math.PI * (65 - t * 90)) * Math.exp(-t * 18) + rnd() * 0.2 * Math.exp(-t * 30));
     // door hiss
     this.buffers.door = mk(0.3, (t) => rnd() * Math.exp(-t * 9) * 0.4 * Math.min(1, t * 40));
     // grenade / carrier boom
@@ -190,12 +187,6 @@ export class GameAudio extends PositionalSynth {
     this.buffers.rumble = mk(0.7, (t) => {
       const env = Math.min(1, t * 8) * Math.exp(-t * 4);
       return (Math.sin(t * 2 * Math.PI * (34 - t * 8)) * 0.6 + rnd() * 0.12) * env;
-    });
-    // radio squelch: the static crackle riding in front of a received
-    // transmission (user: the log is a radio net — let it SOUND like one)
-    this.buffers.squelch = mk(0.16, (t) => {
-      const gate = t < 0.025 || (t > 0.06 && t < 0.12) ? 1 : 0.25;
-      return (rnd() - 0.5) * gate * Math.exp(-t * 7) * 0.9;
     });
     // ship PA: a two-tone chime, then a voice — garbled past understanding
     // by the dying speakers, but unmistakably the 1MC (user: PA announcements

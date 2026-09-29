@@ -85520,7 +85520,6 @@ var init_audio2 = __esm({
           const c2 = t2 * 19 % 1;
           return rnd() * (c2 < 0.12 ? 1 : 0) * Math.exp(-c2 * 40) * 0.6;
         });
-        this.buffers.thud = mk(0.25, (t2) => Math.sin(t2 * 2 * Math.PI * (65 - t2 * 90)) * Math.exp(-t2 * 18) + rnd() * 0.2 * Math.exp(-t2 * 30));
         this.buffers.door = mk(0.3, (t2) => rnd() * Math.exp(-t2 * 9) * 0.4 * Math.min(1, t2 * 40));
         this.buffers.boom = mk(0.9, (t2) => (Math.sin(t2 * 2 * Math.PI * (55 - t2 * 30)) * 0.9 + rnd() * 0.8 * Math.exp(-t2 * 6)) * Math.exp(-t2 * 4.2));
         this.buffers.tick = mk(0.05, (t2) => Math.sin(t2 * 2 * Math.PI * 1900) * Math.exp(-t2 * 90) * 0.6);
@@ -85553,10 +85552,6 @@ var init_audio2 = __esm({
         this.buffers.rumble = mk(0.7, (t2) => {
           const env = Math.min(1, t2 * 8) * Math.exp(-t2 * 4);
           return (Math.sin(t2 * 2 * Math.PI * (34 - t2 * 8)) * 0.6 + rnd() * 0.12) * env;
-        });
-        this.buffers.squelch = mk(0.16, (t2) => {
-          const gate = t2 < 0.025 || t2 > 0.06 && t2 < 0.12 ? 1 : 0.25;
-          return (rnd() - 0.5) * gate * Math.exp(-t2 * 7) * 0.9;
         });
         this.buffers.pa = mk(3.1, (t2) => {
           if (t2 < 0.55) {
@@ -94639,7 +94634,6 @@ function renderLog() {
     div3.innerHTML = `<span class="t">${fmtTime(e2.t)}</span> ${spk}${esc(e2.msg)}`;
     log4.appendChild(div3);
     added = true;
-    if (e2.spk && e2.spk !== "FLEETCOM") audio.play("squelch", null, 0.22, "squelch", 1400);
   }
   if (added) {
     while (log4.childNodes.length > 400) log4.removeChild(log4.firstChild);
@@ -95072,7 +95066,6 @@ function meleeStrike() {
     bestD = d2;
   }
   if (!best) {
-    audio.play("thud", null, 0.3);
     return false;
   }
   const impact = combatMeleeImpulse(
@@ -95083,7 +95076,6 @@ function meleeStrike() {
   hurtFloodForm(sim, best, MA5.meleeDamage, false, player.agent.id, impact);
   gameSync?.hitFlood(best.id, MA5.meleeDamage);
   hitFlash = 1;
-  audio.play("thud", null, 0.9);
   audio.play("tick", null, 0.5, "tick", 40);
   return true;
 }
@@ -95645,7 +95637,6 @@ function frame(now) {
         if (weapon.meleeT <= 0) flameTick(ev.dt);
       } else if (ev.t === "flame_on") {
         _flameSeed = _flameSeed + 1 & 65535;
-        audio.play("thud", null, 0.35);
       } else if (ev.t === "dry") audio.play("clack", null, 0.35);
     }
   }

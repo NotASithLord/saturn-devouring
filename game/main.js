@@ -521,7 +521,7 @@ function toggleSoundBoard() {
 // does not take pointer lock, so you can watch it while you play.
 //   J opens it. Rows are newest-first. A cue repeating inside 1.2 s collapses
 // to a xN counter instead of scrolling the interesting things off the top,
-// which matters because a firefight is mostly `shot` and `thud`.
+// which matters because a firefight repeats `shot`.
 // A debug panel you cannot find is indistinguishable from a key that did not
 // register, and the two have very different fixes. This says which happened.
 function debugToast(msg) {
@@ -2130,8 +2130,6 @@ function renderLog() {
     div.innerHTML = `<span class="t">${fmtTime(e.t)}</span> ${spk}${esc(e.msg)}`;
     log.appendChild(div);
     added = true;
-    // the crackle of a transmission landing (not for FLEETCOM framing text)
-    if (e.spk && e.spk !== 'FLEETCOM') audio.play('squelch', null, 0.22, 'squelch', 1400);
   }
   if (added) {
     while (log.childNodes.length > 400) log.removeChild(log.firstChild);
@@ -2873,7 +2871,6 @@ function meleeStrike() {
     best = a; bestD = d;
   }
   if (!best) {
-    audio.play('thud', null, 0.3); // whiff: you still hear the stock move, quietly
     return false;
   }
   // the ragdoll payload is the whole point of a melee kill — a charging or
@@ -2887,7 +2884,6 @@ function meleeStrike() {
   // other screens for a swing that never fired a round
   gameSync?.hitFlood(best.id, MA5.meleeDamage);
   hitFlash = 1;
-  audio.play('thud', null, 0.9);
   audio.play('tick', null, 0.5, 'tick', 40);
   return true;
 }
@@ -3626,7 +3622,7 @@ function frame(now) {
   reloadPressed = false; meleePressed = false;
   for (const ev of wevents) {
     if (ev.t === 'fire') { traceShot(ev.offAng, ev.offRad); audio.play('shot', null, 0.9); }
-    else if (ev.t === 'melee_hit') meleeStrike(); // the strike owns its own audio: a landed thud reads louder than a whiff
+    else if (ev.t === 'melee_hit') meleeStrike();
     else if (ev.t === 'reload_start') audio.play('clack', null, 0.7);
     else if (ev.t === 'dry') audio.play('clack', null, 0.4);
   }
@@ -3647,7 +3643,7 @@ function frame(now) {
     for (const ev of fevents) {
       // no fire out of a nozzle that is sweeping left across your front
       if (ev.t === 'flame') { if (weapon.meleeT <= 0) flameTick(ev.dt); }
-      else if (ev.t === 'flame_on') { _flameSeed = (_flameSeed + 1) & 0xffff; audio.play('thud', null, 0.35); }
+      else if (ev.t === 'flame_on') { _flameSeed = (_flameSeed + 1) & 0xffff; }
       else if (ev.t === 'dry') audio.play('clack', null, 0.35);
     }
   }
