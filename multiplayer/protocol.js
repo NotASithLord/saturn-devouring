@@ -1,3 +1,5 @@
+// 18: standalone peers negotiate a direct-first ICE attempt and a coordinated
+// TURN restart; older transports cannot answer the fallback offer.
 // 17: hosted Flood shots carry the real shooter and target so peers render
 // the same gunfight the authority resolved.
 // 16: armed-corpse snapshots carry their recoverable ammunition yield.
@@ -29,7 +31,7 @@
 // positional array validated on its LENGTH, so a v2 peer would reject every
 // v3 row wholesale — the version is what keeps the two builds from meeting in
 // the same room at all instead of staring at frozen NPCs.
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 export const MAX_PLAYERS = 4;
 export const QUICKPLAY_ROOM = `charon:quickplay:v${PROTOCOL_VERSION}`;
 const ROOM_PREFIX = `charon:v${PROTOCOL_VERSION}:`;

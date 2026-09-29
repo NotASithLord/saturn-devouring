@@ -1,3 +1,4 @@
+import { createDirectFirstTransport } from './direct-first-transport.js';
 import { createDwebClient } from './dweb-client.js';
 import { createRoomVoice, isRoomVoiceSignal } from './voice.js';
 
@@ -337,6 +338,7 @@ class BrowserSession extends SessionBase {
       selfDid: this.did,
       scope: this.roomId,
       iceServers: args.iceServers,
+      getRelayIceServers: args.getRelayIceServers,
       sendSignal: (to, signal) => this.direct.send(to, signal),
       onState: (status) => this.emit('voice', status),
     });
@@ -446,7 +448,7 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
     throw error;
   }
   const {
-    DEFAULT_ICE_SERVERS, generateIdentity, joinRoom, createGossip, createPresence, createDirect,
+    DEFAULT_ICE_SERVERS, createBufferedChannel, generateIdentity, joinRoom, createGossip, createPresence, createDirect,
     createTopicSync, createMemoryTopicStore,
   } = await import('./peerd-browser.js?v=3');
   const identity = suppliedIdentity ?? await generateIdentity();
@@ -460,25 +462,21 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
   let relayIceServers;
   const unsubscribers = [];
   try {
-    try {
-      relayIceServers = await fetchRelayIceServers({ signal });
-    } catch (error) {
-      if (signal?.aborted) throw cancelledJoinError();
-      // Direct ICE remains useful when the credential service has a transient
-      // problem. If it also fails, PeerConnectionError explains that the relay
-      // fallback was unavailable instead of pretending the room was empty.
-    }
-    // Keep every independent direct path first. TURN candidates are still
-    // gathered so ICE can fail over without a second 15-second handshake,
-    // but WebRTC's candidate priorities select host/LAN, IPv6, and STUN
-    // server-reflexive pairs ahead of relay pairs.
-    const iceServers = [...DEFAULT_ICE_SERVERS, ...(relayIceServers ?? [])];
+    const iceServers = DEFAULT_ICE_SERVERS;
+    const getRelayIceServers = async (options) => {
+      const servers = await fetchRelayIceServers(options);
+      relayIceServers = servers;
+      return servers;
+    };
+    const transport = createDirectFirstTransport({
+      iceServers, getRelayIceServers, createBufferedChannel,
+    });
     try {
       room = await joinRoom({
         roomId,
         identity,
         kind: 'website',
-        iceServers,
+        iceServers, transport,
         audit(event) {
           const failure = peerConnectionFailure(event, { relayAvailable: !!relayIceServers });
           if (!failure) return;
@@ -503,7 +501,7 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
     direct = createDirect({ mesh: room.mesh });
     session = new BrowserSession({
       roomId, name, did: identity.did, identity, room, gossip, sync, presence, direct,
-      iceServers, unsubscribers,
+      iceServers, getRelayIceServers, unsubscribers,
     });
   unsubscribers.push(
     room.onPeer(({ did } = {}) => {

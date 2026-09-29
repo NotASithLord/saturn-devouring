@@ -65300,6 +65300,7 @@ var<${access}> ${name} : ${structName};`;
 var peerd_browser_exports = {};
 __export(peerd_browser_exports, {
   DEFAULT_ICE_SERVERS: () => DEFAULT_ICE_SERVERS2,
+  createBufferedChannel: () => createBufferedChannel,
   createDirect: () => createDirect,
   createGossip: () => createGossip,
   createMemoryTopicStore: () => createMemoryTopicStore,
@@ -68932,7 +68933,7 @@ function validGamePacket(packet) {
 var PROTOCOL_VERSION, MAX_PLAYERS, QUICKPLAY_ROOM, ROOM_PREFIX, SAFE_CODE, PUBLIC_LOBBY, GAME_KINDS, bytesToHex, hexToBytes;
 var init_protocol = __esm({
   "multiplayer/protocol.js"() {
-    PROTOCOL_VERSION = 17;
+    PROTOCOL_VERSION = 18;
     MAX_PLAYERS = 4;
     QUICKPLAY_ROOM = `charon:quickplay:v${PROTOCOL_VERSION}`;
     ROOM_PREFIX = `charon:v${PROTOCOL_VERSION}:`;
@@ -97277,6 +97278,265 @@ var init_main = __esm({
 // charon-dwapp-hub.mjs
 init_three_webgpu_module();
 
+// multiplayer/ice-fallback.js
+var DIRECT_ICE_TIMEOUT_MS = 5e3;
+var RELAY_CREDENTIAL_TIMEOUT_MS = 3e3;
+function createIceFallback({
+  pc,
+  getRelayIceServers,
+  restart,
+  isConnected = () => ["connected", "completed"].includes(pc.iceConnectionState),
+  timeoutMs = DIRECT_ICE_TIMEOUT_MS,
+  onError = () => {
+  }
+}) {
+  let timer;
+  let pending;
+  let stopped = false;
+  let attempted = false;
+  let enabled = false;
+  const abort = new AbortController();
+  const usable = () => !stopped && pc.signalingState !== "closed" && !isConnected();
+  const clear = () => {
+    clearTimeout(timer);
+    timer = void 0;
+  };
+  const enable = () => {
+    clear();
+    if (pending) return pending;
+    if (attempted || !usable() || !getRelayIceServers) return Promise.resolve(false);
+    attempted = true;
+    pending = (async () => {
+      const credentialTimer = setTimeout(() => abort.abort(), RELAY_CREDENTIAL_TIMEOUT_MS);
+      try {
+        const servers = await getRelayIceServers({ signal: abort.signal });
+        if (!usable() || abort.signal.aborted || !servers?.length) return false;
+        const configuration = pc.getConfiguration();
+        pc.setConfiguration({
+          ...configuration,
+          iceServers: [...configuration.iceServers ?? [], ...servers],
+          iceTransportPolicy: "all"
+        });
+        enabled = true;
+        return true;
+      } finally {
+        clearTimeout(credentialTimer);
+      }
+    })();
+    return pending;
+  };
+  let retry;
+  const tryFallback = () => {
+    if (retry) return retry;
+    retry = (async () => {
+      try {
+        if (await enable() && usable()) await restart();
+      } catch (error2) {
+        if (!stopped) onError(error2);
+      }
+    })();
+    return retry;
+  };
+  return {
+    start() {
+      if (!timer && !attempted && usable()) timer = setTimeout(tryFallback, timeoutMs);
+    },
+    enable,
+    tryFallback,
+    connected: clear,
+    stop() {
+      stopped = true;
+      clear();
+      abort.abort();
+    },
+    get enabled() {
+      return enabled;
+    }
+  };
+}
+
+// multiplayer/direct-first-transport.js
+function createDirectFirstTransport({
+  iceServers,
+  getRelayIceServers,
+  createBufferedChannel: createBufferedChannel2,
+  RTCPeerConnection = globalThis.RTCPeerConnection,
+  directTimeoutMs
+}) {
+  const begin = ({ initiator, offer, signaling, signal }) => {
+    if (!signaling?.send || !signaling?.onRemote) throw new Error("signaling is required");
+    const pc = new RTCPeerConnection({ bundlePolicy: "max-bundle", iceTransportPolicy: "all", iceServers });
+    let opened = false;
+    let closed = false;
+    let off = () => {
+    };
+    let channel;
+    let disconnectTimer;
+    let descriptionSent = false;
+    let localCandidates = [];
+    const remoteCandidates = [];
+    let resolve;
+    let reject;
+    const ready = new Promise((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    void ready.catch(() => {
+    });
+    const cleanup = () => {
+      fallback.stop();
+      off();
+      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(disconnectTimer);
+    };
+    const close = (error2 = new Error("WebRTC connection closed")) => {
+      if (closed) return;
+      closed = true;
+      cleanup();
+      pc.close();
+      channel?.signalClose();
+      if (!opened) reject(error2);
+    };
+    const onAbort = () => {
+      if (!opened) close(new Error("WebRTC connection cancelled"));
+    };
+    const sendDescription = async (description, relayFallback = false) => {
+      descriptionSent = false;
+      localCandidates = [];
+      await pc.setLocalDescription(description);
+      if (closed) return;
+      signaling.send({ type: description.type, sdp: pc.localDescription.sdp, relayFallback });
+      descriptionSent = true;
+      for (const ice of localCandidates.splice(0)) signaling.send({ ice });
+    };
+    const fallback = createIceFallback({
+      pc,
+      getRelayIceServers,
+      timeoutMs: directTimeoutMs,
+      isConnected: () => opened || ["connected", "completed"].includes(pc.iceConnectionState),
+      restart: async () => {
+        if (!initiator || closed || opened) return;
+        await sendDescription(await pc.createOffer({ iceRestart: true }), true);
+      },
+      // A credential outage must not interrupt a direct attempt still running.
+      onError: () => {
+      }
+    });
+    pc.onicecandidate = ({ candidate }) => {
+      if (!candidate || closed) return;
+      const ice = candidate.toJSON ? candidate.toJSON() : candidate;
+      if (descriptionSent) signaling.send({ ice });
+      else localCandidates.push(ice);
+    };
+    const wire = (dc) => {
+      dc.binaryType = "arraybuffer";
+      channel = createBufferedChannel2({
+        send: (message) => {
+          if (dc.readyState === "open") dc.send(JSON.stringify(message));
+        },
+        close: () => {
+          dc.close();
+          close();
+        }
+      });
+      channel.pc = pc;
+      dc.onmessage = ({ data }) => {
+        const bytes = typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+        if (bytes > 1e6) return;
+        let message;
+        try {
+          message = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data));
+        } catch {
+          return;
+        }
+        channel.deliver(message);
+      };
+      dc.onclose = () => close();
+      dc.onopen = () => {
+        if (closed || opened) return;
+        opened = true;
+        cleanup();
+        resolve(channel);
+      };
+      if (dc.readyState === "open") dc.onopen();
+    };
+    if (initiator) wire(pc.createDataChannel("peerd", { ordered: true }));
+    else pc.ondatachannel = ({ channel: dc }) => wire(dc);
+    const stateChanged = () => {
+      if (closed) return;
+      const state = pc.iceConnectionState;
+      if (state === "connected" || state === "completed") {
+        fallback.connected();
+        clearTimeout(disconnectTimer);
+        disconnectTimer = void 0;
+      } else if (!opened && state === "failed") {
+        if (initiator) void fallback.tryFallback();
+      } else if (opened && (state === "failed" || state === "closed")) close();
+      else if (opened && state === "disconnected" && !disconnectTimer) {
+        disconnectTimer = setTimeout(() => {
+          if (!["connected", "completed"].includes(pc.iceConnectionState)) close();
+        }, 5e3);
+      }
+    };
+    pc.addEventListener("iceconnectionstatechange", stateChanged);
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc.connectionState === "closed") close();
+      else if (pc.connectionState === "failed") {
+        if (opened) close();
+        else if (initiator) void fallback.tryFallback();
+      }
+    });
+    const setRemote = async (description) => {
+      await pc.setRemoteDescription(description);
+      for (const ice of remoteCandidates.splice(0)) await pc.addIceCandidate(ice).catch(() => {
+      });
+    };
+    let queue = Promise.resolve();
+    let fallbackOfferSeen = false;
+    const receive = async (message) => {
+      if (!message || closed || opened) return;
+      if (message.type === "offer" && !initiator) {
+        if (message.relayFallback === true) {
+          if (fallbackOfferSeen || !pc.remoteDescription) return;
+          fallbackOfferSeen = true;
+          try {
+            await fallback.enable();
+          } catch {
+          }
+        }
+        await setRemote({ type: "offer", sdp: message.sdp });
+        await sendDescription(await pc.createAnswer());
+      } else if (message.type === "answer" && initiator) {
+        await setRemote({ type: "answer", sdp: message.sdp });
+      } else if (message.ice) {
+        if (pc.remoteDescription) await pc.addIceCandidate(message.ice).catch(() => {
+        });
+        else if (remoteCandidates.length < 64) remoteCandidates.push(message.ice);
+      }
+    };
+    off = signaling.onRemote((message) => {
+      queue = queue.then(() => receive(message)).catch(close);
+    });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    const start = async () => {
+      if (closed) return;
+      if (initiator) {
+        await sendDescription(await pc.createOffer());
+        fallback.start();
+      } else await receive(offer);
+    };
+    queue = queue.then(start).catch(close);
+    return ready;
+  };
+  return {
+    name: "webrtc",
+    canReach: () => 0.6,
+    connect: (_peer, options) => begin({ ...options, initiator: true }),
+    accept: async (options) => ({ channel: begin({ ...options, initiator: false }) })
+  };
+}
+
 // multiplayer/dweb-client.js
 function createDwebClient({ timeoutMs = 2500 } = {}) {
   let sequence = 0;
@@ -97402,6 +97662,7 @@ function createRoomVoice({
   onState = () => {
   },
   iceServers = DEFAULT_ICE_SERVERS,
+  getRelayIceServers,
   RTCPeerConnection: PeerConnection = globalThis.RTCPeerConnection,
   mediaDevices = globalThis.navigator?.mediaDevices,
   createAudio = () => document.createElement("audio")
@@ -97436,6 +97697,8 @@ function createRoomVoice({
     const record = connections.get(peer);
     if (!record) return;
     connections.delete(peer);
+    record.fallback?.stop();
+    clearTimeout(record.connectTimer);
     const timer = disconnectTimers.get(peer);
     if (timer) clearTimeout(timer);
     disconnectTimers.delete(peer);
@@ -97507,6 +97770,29 @@ function createRoomVoice({
     }
     const record = { pc, audio: audio2, remoteSession, pendingIce: [] };
     connections.set(peer, record);
+    record.fallback = createIceFallback({
+      pc,
+      getRelayIceServers,
+      restart: async () => {
+        if (selfDid >= peer || connections.get(peer) !== record) return;
+        const offer = await pc.createOffer({ iceRestart: true });
+        if (connections.get(peer) !== record) return;
+        await pc.setLocalDescription(offer);
+        if (connections.get(peer) !== record) return;
+        await send(peer, {
+          __peerdMedia: MEDIA_MARKER,
+          scope,
+          kind: "offer",
+          session: localSession,
+          replyTo: remoteSession,
+          sdp: pc.localDescription.sdp,
+          relayFallback: true
+        });
+      }
+    });
+    record.connectTimer = setTimeout(() => {
+      if (connections.get(peer) === record && pc.connectionState !== "connected") closePeer(peer);
+    }, 15e3);
     pc.onicecandidate = (event) => {
       const candidate = event.candidate;
       if (!candidate || connections.get(peer) !== record) return;
@@ -97540,6 +97826,9 @@ function createRoomVoice({
     pc.onconnectionstatechange = () => {
       if (connections.get(peer) !== record) return;
       if (pc.connectionState === "connected") {
+        record.wasConnected = true;
+        record.fallback.stop();
+        clearTimeout(record.connectTimer);
         const timer = disconnectTimers.get(peer);
         if (timer) clearTimeout(timer);
         disconnectTimers.delete(peer);
@@ -97553,8 +97842,12 @@ function createRoomVoice({
           }
         }, 3e3));
       } else if (pc.connectionState === "failed") {
-        closePeer(peer);
-        sendReady(peer, false);
+        if (record.wasConnected) {
+          closePeer(peer);
+          sendReady(peer, false);
+          return;
+        }
+        if (selfDid < peer) void record.fallback.tryFallback();
       }
     };
     report();
@@ -97578,6 +97871,7 @@ function createRoomVoice({
       replyTo: remoteSession,
       sdp: record.pc.localDescription.sdp
     });
+    record.fallback.start();
   };
   const flushIce = async (record) => {
     for (const candidate of record.pendingIce.splice(0)) {
@@ -97608,7 +97902,16 @@ function createRoomVoice({
       const previous = remoteSessions.get(from);
       if (previous && previous !== data.session) closePeer(from);
       remoteSessions.set(from, data.session);
-      const record2 = makePeer(from, data.session);
+      let record2 = connections.get(from);
+      if (data.relayFallback === true) {
+        if (!record2 || record2.remoteSession !== data.session || record2.fallbackOfferSeen) return true;
+        record2.fallbackOfferSeen = true;
+        try {
+          await record2.fallback.enable();
+        } catch {
+        }
+        if (connections.get(from) !== record2) return true;
+      } else record2 = makePeer(from, data.session);
       if (!record2) return true;
       const early = earlyIce.get(from);
       if (early?.session === data.session) record2.pendingIce.push(...early.candidates);
@@ -98088,6 +98391,7 @@ var BrowserSession = class extends SessionBase {
       selfDid: this.did,
       scope: this.roomId,
       iceServers: args.iceServers,
+      getRelayIceServers: args.getRelayIceServers,
       sendSignal: (to, signal) => this.direct.send(to, signal),
       onState: (status) => this.emit("voice", status)
     });
@@ -98179,6 +98483,7 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
   }
   const {
     DEFAULT_ICE_SERVERS: DEFAULT_ICE_SERVERS3,
+    createBufferedChannel: createBufferedChannel2,
     generateIdentity: generateIdentity2,
     joinRoom: joinRoom2,
     createGossip: createGossip2,
@@ -98198,18 +98503,24 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
   let relayIceServers;
   const unsubscribers = [];
   try {
-    try {
-      relayIceServers = await fetchRelayIceServers({ signal });
-    } catch (error2) {
-      if (signal?.aborted) throw cancelledJoinError();
-    }
-    const iceServers = [...DEFAULT_ICE_SERVERS3, ...relayIceServers ?? []];
+    const iceServers = DEFAULT_ICE_SERVERS3;
+    const getRelayIceServers = async (options) => {
+      const servers = await fetchRelayIceServers(options);
+      relayIceServers = servers;
+      return servers;
+    };
+    const transport = createDirectFirstTransport({
+      iceServers,
+      getRelayIceServers,
+      createBufferedChannel: createBufferedChannel2
+    });
     try {
       room = await joinRoom2({
         roomId,
         identity,
         kind: "website",
         iceServers,
+        transport,
         audit(event) {
           const failure = peerConnectionFailure(event, { relayAvailable: !!relayIceServers });
           if (!failure) return;
@@ -98239,6 +98550,7 @@ async function browserSession({ roomId, name, identity: suppliedIdentity, signal
       presence,
       direct,
       iceServers,
+      getRelayIceServers,
       unsubscribers
     });
     unsubscribers.push(
