@@ -248,6 +248,24 @@ export class Sim {
     this._refreshOccupancy();
     this._refreshMarineMotion();
     this._computeInfluence();
+    // The opening split must exist before the first actuator tick. Otherwise
+    // the reflexive corpse conversion claims every crash-site body before the
+    // strategic planner gets its first turn, erasing the vent-dispersion rule.
+    // The port capacitor's nearby food is more valuable than an immediate
+    // vent departure there; elsewhere, opening runners leave before the
+    // corpse reflex can cancel their assigned dispersion.
+    this.openingVentFromStart = this.P.hive.openingVentFromStart === 'spawn-aware'
+      ? graph.node(graph.breachNode).id !== 'capPort'
+      : !!this.P.hive.openingVentFromStart;
+    if (this.openingVentFromStart) {
+      const initialPods = agents.filter((a) => a.faction === FACTION.INFECTION);
+      const initialBodies = agents.filter((a) => a.faction === FACTION.CORPSE);
+      const openingPlan = this.hive._openingSpread(initialPods, initialBodies);
+      for (const pod of initialPods) {
+        const target = openingPlan.get(pod.id);
+        if (target !== undefined) this.hive.assign(pod, { kind: TASK.MOVE, node: target, spread: true });
+      }
+    }
     const marineCount = agents.filter((a) => a.faction === FACTION.MARINE).length;
     const civilianCount = agents.filter((a) => a.faction === FACTION.CIVILIAN).length;
     const armedCount = agents.filter((a) => a.faction === FACTION.ARMED).length;

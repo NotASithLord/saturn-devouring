@@ -277,6 +277,9 @@ export const PARAMS = {
     },
     searchMinPool: 45,         // won't spend forms searching below this pool
     openingSweepMargin: 12,    // sec of safety margin vs estimated sweep ETA
+    openingVentFraction: null, // null: spawn-aware; keep one form per crash-site body
+    openingVentFromStart: 'spawn-aware', // port capacitor feeds briefly first; other sites dispatch before local corpse reflex
+    openingCountUsableBodies: false, // experiment: burned bodies cannot feed local pods
   },
   // FIRETEAM COVERAGE POSTS (user: escorts should hold standing positions
   // that cover the room instead of re-shuffling every time you take a step).

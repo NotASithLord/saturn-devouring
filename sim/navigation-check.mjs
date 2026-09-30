@@ -52,6 +52,7 @@ const openingSim = new Sim('opening-newborn-check');
 for (const agent of openingSim.agents) agent.dead = true;
 const firstPod = makeAgent(FACTION.INFECTION, openingSim.graph.breachNode, openingSim.graph);
 openingSim.spawn(firstPod);
+openingSim.hive._spreadPlan = null; // replace the constructor's opening roster with this fixture's pod
 openingSim.hive._openingSpread([firstPod], []);
 const newborn = makeAgent(FACTION.INFECTION, nursery.idx, openingSim.graph);
 openingSim.spawn(newborn);

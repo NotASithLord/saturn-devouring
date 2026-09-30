@@ -34,3 +34,30 @@ assert.equal(explicit.P.flood.initialInfectionForms, 7);
 assert.equal(countForms(explicit), 7);
 
 console.log('opening infection count check ok');
+
+for (const [fraction, expected] of [[null, null], [0, 0], [0.75, 8], [1, 10]]) {
+  const sim = new Sim('charon-1', { hive: { openingVentFraction: fraction } });
+  const infection = sim.agents.filter((a) => a.faction === FACTION.INFECTION);
+  const bodies = sim.agents.filter((a) => a.faction === FACTION.CORPSE);
+  const larder = bodies.filter((a) => a.node === sim.graph.breachNode).length;
+  const spread = sim.hive._openingSpread(infection, bodies);
+  assert.equal(spread.size, expected ?? Math.max(0, infection.length - larder));
+  assert.equal(infection.filter((a) => a.task?.spread).length, spread.size,
+    'opening vent orders must exist before the first actuator tick');
+  for (const target of spread.values()) assert.notEqual(target, sim.graph.breachNode);
+  if (fraction === 1) {
+    sim.tick();
+    assert.equal(bodies.filter((a) => a.node === sim.graph.breachNode && a.claimed).length, 0,
+      'vent-bound forms must leave crash-site corpses for local feeders');
+  }
+}
+
+console.log('opening dispersion count check ok');
+
+const portCapacitor = new Sim('holdout-02');
+assert.equal(portCapacitor.graph.node(portCapacitor.graph.breachNode).id, 'capPort');
+assert.equal(portCapacitor.openingVentFromStart, false,
+  'the port capacitor keeps its opening forms near the crash-site bodies first');
+assert.equal(portCapacitor.hive._spreadPlan, undefined);
+assert.equal(new Sim('holdout-03').openingVentFromStart, true,
+  'the starboard capacitor sends its spare forms into the vents immediately');

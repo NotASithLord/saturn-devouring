@@ -1380,10 +1380,21 @@ export class Hive {
     if (this._spreadPlan) return this._spreadPlan;
     const sim = this.sim, g = sim.graph;
     const plan = new Map();
-    const larder = bodies.filter((b) => b.node === g.breachNode).length;
-    // forms sorted by id: the first `larder` stay to eat, the rest spread
+    const larder = bodies.filter((b) => b.node === g.breachNode
+      && (!sim.P.hive.openingCountUsableBodies || (!b.dead && b.damage < 100))).length;
+    // A fixed fraction is available for paired seed experiments. The normal
+    // rule keeps one form per crash-site body, so no opening food is stranded.
+    const configured = sim.P.hive.openingVentFraction;
+    const fraction = configured === 'deck-adaptive'
+      ? (g.node(g.breachNode).deck >= 5 ? null : 0)
+      : configured;
+    const ventCount = fraction === null
+      ? Math.max(0, infection.length - larder)
+      : Math.max(0, Math.min(infection.length,
+        Math.round(infection.length * Math.max(0, Math.min(1, fraction)))));
+    // forms sorted by id: the first group stays to eat, the rest spreads
     const sorted = [...infection].sort((a, b) => a.id - b.id);
-    const spares = sorted.slice(Math.min(larder, sorted.length));
+    const spares = sorted.slice(sorted.length - ventCount);
     if (!spares.length) { this._spreadPlan = plan; return plan; }
     // candidate soft spots: living/soft/medical/storage spaces, no marine
     // posts, nothing beside a marine post, never the breach itself

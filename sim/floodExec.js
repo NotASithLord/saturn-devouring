@@ -185,12 +185,16 @@ export function updateFloodTick(sim, dt) {
         if (prey && a.task?.targetId !== prey.id) {
           hive.assign(a, { kind: TASK.GRAB, targetId: prey.id });
         } else if (!prey) {
-          // ALWAYS INFECT (user rule, no exceptions): bodies in the room get
-          // burrowed into IMMEDIATELY and IN PARALLEL — each form claims its
+          // Local feeders infect bodies in the room IMMEDIATELY and IN
+          // PARALLEL — each form claims its
           // own corpse, the 3s conversions all run at once, and every form
           // that can't claim a body flees. One fast wave, then gone. No
           // serial grazing window (that read as "sitting on the crash site").
-          const corpse = here.find((c) => c.faction === FACTION.CORPSE && !c.dead && c.damage < 100 && !c.claimed);
+          // An opening vent runner must leave the crash site before feeding.
+          // It may still seize a live host; only the abundant local corpses
+          // would silently cancel the deliberately dispersed opening.
+          const corpse = sim.openingVentFromStart && a.task?.spread && a.node !== a.task.node ? null
+            : here.find((c) => c.faction === FACTION.CORPSE && !c.dead && c.damage < 100 && !c.claimed);
           if (corpse) {
             corpse.claimed = true;
             hive.assign(a, { kind: TASK.CONVERT, corpseId: corpse.id });

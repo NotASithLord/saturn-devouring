@@ -69562,8 +69562,14 @@ var init_params = __esm({
         },
         searchMinPool: 45,
         // won't spend forms searching below this pool
-        openingSweepMargin: 12
+        openingSweepMargin: 12,
         // sec of safety margin vs estimated sweep ETA
+        openingVentFraction: null,
+        // null: spawn-aware; keep one form per crash-site body
+        openingVentFromStart: "spawn-aware",
+        // port capacitor feeds briefly first; other sites dispatch before local corpse reflex
+        openingCountUsableBodies: false
+        // experiment: burned bodies cannot feed local pods
       },
       // FIRETEAM COVERAGE POSTS (user: escorts should hold standing positions
       // that cover the room instead of re-shuffling every time you take a step).
@@ -73548,9 +73554,15 @@ var init_hive = __esm({
         if (this._spreadPlan) return this._spreadPlan;
         const sim2 = this.sim, g2 = sim2.graph;
         const plan = /* @__PURE__ */ new Map();
-        const larder = bodies.filter((b2) => b2.node === g2.breachNode).length;
+        const larder = bodies.filter((b2) => b2.node === g2.breachNode && (!sim2.P.hive.openingCountUsableBodies || !b2.dead && b2.damage < 100)).length;
+        const configured = sim2.P.hive.openingVentFraction;
+        const fraction = configured === "deck-adaptive" ? g2.node(g2.breachNode).deck >= 5 ? null : 0 : configured;
+        const ventCount = fraction === null ? Math.max(0, infection.length - larder) : Math.max(0, Math.min(
+          infection.length,
+          Math.round(infection.length * Math.max(0, Math.min(1, fraction)))
+        ));
         const sorted = [...infection].sort((a2, b2) => a2.id - b2.id);
-        const spares = sorted.slice(Math.min(larder, sorted.length));
+        const spares = sorted.slice(sorted.length - ventCount);
         if (!spares.length) {
           this._spreadPlan = plan;
           return plan;
@@ -74655,7 +74667,7 @@ function updateFloodTick(sim2, dt) {
         if (prey && a2.task?.targetId !== prey.id) {
           hive.assign(a2, { kind: TASK.GRAB, targetId: prey.id });
         } else if (!prey) {
-          const corpse = here.find((c2) => c2.faction === FACTION.CORPSE && !c2.dead && c2.damage < 100 && !c2.claimed);
+          const corpse = sim2.openingVentFromStart && a2.task?.spread && a2.node !== a2.task.node ? null : here.find((c2) => c2.faction === FACTION.CORPSE && !c2.dead && c2.damage < 100 && !c2.claimed);
           if (corpse) {
             corpse.claimed = true;
             hive.assign(a2, { kind: TASK.CONVERT, corpseId: corpse.id });
@@ -76035,6 +76047,16 @@ var init_sim = __esm({
         this._refreshOccupancy();
         this._refreshMarineMotion();
         this._computeInfluence();
+        this.openingVentFromStart = this.P.hive.openingVentFromStart === "spawn-aware" ? graph.node(graph.breachNode).id !== "capPort" : !!this.P.hive.openingVentFromStart;
+        if (this.openingVentFromStart) {
+          const initialPods = agents2.filter((a2) => a2.faction === FACTION.INFECTION);
+          const initialBodies = agents2.filter((a2) => a2.faction === FACTION.CORPSE);
+          const openingPlan = this.hive._openingSpread(initialPods, initialBodies);
+          for (const pod of initialPods) {
+            const target = openingPlan.get(pod.id);
+            if (target !== void 0) this.hive.assign(pod, { kind: TASK.MOVE, node: target, spread: true });
+          }
+        }
         const marineCount = agents2.filter((a2) => a2.faction === FACTION.MARINE).length;
         const civilianCount = agents2.filter((a2) => a2.faction === FACTION.CIVILIAN).length;
         const armedCount = agents2.filter((a2) => a2.faction === FACTION.ARMED).length;
