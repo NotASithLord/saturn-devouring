@@ -237,7 +237,9 @@ body[data-input="gamepad"] .docs-tabs button:focus { outline: 1px solid var(--hu
 .docs-panel ul { padding-left: 20px; }
 .docs-panel code { color: var(--hub-cyan); font: 12px monospace; }
 .docs-panel pre { overflow: auto; margin-top: 12px; border: 1px solid var(--hub-line); background: #05090d; color: #b7cad3; padding: 16px; font: 12px/1.6 monospace; }
-.hub-footer { margin-top: 72px; padding-top: 18px; border-top: 1px solid var(--hub-line); color: #8da0ac; font-size: 10px; letter-spacing: .1em; display: flex; justify-content: space-between; }
+.hub-footer { margin-top: 72px; padding-top: 18px; border-top: 1px solid var(--hub-line); color: #8da0ac; font-size: 10px; letter-spacing: .1em; }
+.hub-footer-status { display: flex; justify-content: space-between; gap: 16px; }
+.hub-legal { margin-top: 18px; color: #8da0ac; font: 11px/1.5 system-ui, sans-serif; letter-spacing: normal; }
 #networkHud { left: 14px; bottom: 174px; display: flex; align-items: center; gap: 8px; pointer-events: auto; }
 #networkHud[hidden] { display: none; }
 #networkHud span { background: rgba(5,9,14,.86); border: 1px solid #314755; color: #87d9df; padding: 5px 8px; font-size: 10px; letter-spacing: .1em; }
@@ -285,7 +287,7 @@ body[data-input="gamepad"] .docs-tabs button:focus { outline: 1px solid var(--hu
   .hub-shell { width: min(100% - 28px, 1180px); padding-top: 36px; }
   .hub-top { padding-inline: 16px; }
   .hub-hero h1 { font-size: 52px; }
-  .hub-footer { flex-direction: column; gap: 8px; }
+  .hub-footer-status { flex-direction: column; gap: 8px; }
   .invite-copy { flex-direction: column; }
   .invite-copy .hub-input { min-width: 0; }
 }
