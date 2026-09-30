@@ -1446,16 +1446,15 @@ function updateStrengthHud(now) {
     else if (a.faction === FACTION.MARINE && !a.isPlayer && !a.fromPlayer) marinesAlive++;
   }
   // One Flood per marine is halfway; two Flood per marine fills the track.
-  // The actual percentage keeps growing, while the end of the bar fractures.
+  // Past that point the end of the bar fractures.
   const percent = marinesAlive ? 50 * floodAlive / marinesAlive
     : floodAlive ? Infinity : 0;
   const overmatched = percent > 100;
   setStyle('infectionStrengthBar', 'transform',
     `scaleX(${Math.min(1, percent / 100).toFixed(3)})`);
-  setText('infectionStrengthValue', Number.isFinite(percent) ? `${Math.round(percent)}%` : '∞');
   strengthHud.classList.toggle('overmatched', overmatched);
   strengthMeter.setAttribute('aria-valuenow', String(Math.min(100, Math.round(percent))));
-  strengthMeter.setAttribute('aria-valuetext', `${floodAlive} Flood to ${marinesAlive} marines, ${Number.isFinite(percent) ? `${Math.round(percent)} percent` : 'beyond scale'}`);
+  strengthMeter.setAttribute('aria-label', overmatched ? 'Infection strength beyond scale' : 'Infection strength');
 }
 const overlay = el('overlay');
 

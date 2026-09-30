@@ -23,19 +23,13 @@
     top: 47px; left: 14px; width: 205px; padding: 7px 9px 8px;
     background: rgba(5,9,14,.58); border-left: 1px solid rgba(120,145,175,.4);
   }
-  .strength-heading { display: flex; justify-content: space-between; align-items: baseline; }
   .strength-label {
     display: block; margin-bottom: 3px; color: #8290a2;
     font-size: 9px; line-height: 1; letter-spacing: .16em;
   }
-  #infectionStrengthValue { color: #c15843; font-size: 10px; letter-spacing: .08em; }
   .strength-track {
     position: relative; height: 6px; background: rgba(14,20,29,.9);
     border: 1px solid rgba(68,83,103,.65);
-  }
-  .strength-track::before {
-    content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px;
-    width: 1px; background: rgba(185,204,222,.75); z-index: 1;
   }
   .strength-track i {
     display: block; width: 100%; height: 100%; transform: scaleX(0); transform-origin: left;
@@ -48,11 +42,6 @@
     width: 12px; height: 10px; background: #e18367;
     clip-path: polygon(0 0, 45% 0, 20% 40%, 100% 25%, 52% 65%, 82% 100%, 0 100%);
     filter: drop-shadow(0 0 3px #e18367);
-  }
-  #strengthHud.overmatched #infectionStrengthValue { color: #e9a084; }
-  .strength-scale {
-    display: flex; justify-content: space-between; margin-top: 3px;
-    color: #637386; font-size: 8px; line-height: 1; letter-spacing: .04em;
   }
   /* CE AR reticle (ported from first-strike): circle of 4 arcs + dot,
      blooming with weapon spread via --sp (set per frame from spreadDeg) */
@@ -499,8 +488,9 @@ npm run build:dwapp</pre></article>
     <div class="vital-row"><span class="vital-label">ARMOR</span><div class="bar"><div id="armorBar"></div></div></div>
     <div class="vital-row"><span class="vital-label">HEALTH</span><div class="bar"><div id="healthBar"></div></div></div>
   </div>
-  <div class="hud" id="strengthHud" aria-label="Infection strength relative to ship marines">
-    <div class="strength-row"><div class="strength-heading"><span class="strength-label">INFECTION STRENGTH</span><span id="infectionStrengthValue">0%</span></div><div class="strength-track" role="meter" aria-label="Flood to marine strength" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="infectionStrengthBar"></i></div><div class="strength-scale"><span>0</span><span>1:1</span><span>2:1</span></div></div>
+  <div class="hud" id="strengthHud">
+    <span class="strength-label">INFECTION STRENGTH</span>
+    <div class="strength-track" role="meter" aria-label="Infection strength" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="infectionStrengthBar"></i></div>
   </div>
   <div class="hud" id="equipmentHud">
     <div id="deckLabel">DECK —</div>
