@@ -9,6 +9,7 @@ import { FACTION, FLAG, CLIP } from '../shared/agentBuffer.js';
 import { elevOf, clearHeightOf } from './world.js';
 import { carryGeometry, flamerGeometry, FLAMER_MUZZLE, MA5_GUNMETAL } from './rifle-model.js';
 import { characterParts } from './characters.js';
+import { H3_MARINE_ANIMATIONS } from './marine-h3-animations.js';
 import { buildCarrier, CarrierAnimator, SACK_BLOAT_M } from './carrier-model.js';
 import { RagdollSystem } from '../engine/physics/ragdoll.js';
 import { floorLiftForBounds } from './ragdoll-clearance.js';
@@ -324,8 +325,8 @@ export class Agents3D {
     this.rpos = new Map(); // id -> smoothed {x, y(z-sim), deck}
     this.playerId = -1;
 
-    // REAL SKINS (user note): converted Halo character meshes — H2 marines/
-    // crew/infection form, H3 flood combat forms (civilian + ODST hosts) —
+    // REAL SKINS (user note): converted Halo character meshes — H3 marines/
+    // flood combat forms, H2 crew/infection form —
     // drawn as one InstancedMesh per texture group, feet at y=0. The
     // carrier keeps its procedural swelling body (no source mesh exists);
     // corpses are the character meshes laid flat (burned husks stay slabs).
@@ -688,6 +689,20 @@ export class Agents3D {
     }
   }
 
+  _marineJoint(part, clip, t) {
+    const name = clip === CLIP.WALK ? 'walk' : clip === CLIP.RUN ? 'run'
+      : clip === CLIP.ATTACK ? 'fire' : 'idle';
+    const bank = H3_MARINE_ANIMATIONS[name];
+    const at = ((t * bank.fps) % bank.frames.length + bank.frames.length) % bank.frames.length;
+    const a = Math.floor(at), b = (a + 1) % bank.frames.length;
+    this._h3Q ??= new THREE.Quaternion();
+    this._h3B ??= new THREE.Quaternion();
+    this._h3Q.fromArray(bank.frames[a][part]);
+    this._h3B.fromArray(bank.frames[b][part]);
+    this._h3Q.slerp(this._h3B, at - a);
+    return this._h3Q;
+  }
+
   // FEET ON THE DECK. A rigid leg swung θ about its hip lifts its foot
   // L·(1−cos θ) off the floor, so the old ±0.5 rad stride had BOTH feet
   // floating up to 11 cm at full scissor — a body skating along above the
@@ -858,6 +873,30 @@ export class Agents3D {
       const pivot = mesh.userData.pivot;
       const part = mesh.userData.part;
       if (!pivot || clip === CLIP.DEATH) { mesh.setMatrixAt(i, this._m); continue; }
+      if (set === this.marineSet) {
+        const motion = this._marineJoint(part, clip, animT);
+        if (arms && (part === 'armL' || part === 'armR')) {
+          // Keep the solved grip on the rifle while adding the source clip's
+          // firing recoil and a restrained share of its locomotion motion.
+          this._h3Add ??= new THREE.Quaternion();
+          this._h3Add.identity().slerp(motion, clip === CLIP.ATTACK ? 1 : 0.25);
+          const grip = part === 'armR' ? hold.qR : hold.qL;
+          this._mRot.makeRotationFromQuaternion(this._h3Add.premultiply(grip));
+          if (bob) this._mRot.premultiply(this._mPart.makeRotationAxis(AXIS_Z, bob));
+        } else {
+          this._mRot.makeRotationFromQuaternion(motion);
+          if (aim > 0 && (part === 'legL' || part === 'legR')) {
+            const stance = this._aimLegs(id);
+            this._mRot.premultiply(this._mPart.makeRotationZ((part === 'legL' ? stance.l : stance.r) * aim));
+          }
+        }
+        this._mPart.makeTranslation(pivot[0], pivot[1], pivot[2])
+          .multiply(this._mRot)
+          .multiply(this._mOut.makeTranslation(-pivot[0], -pivot[1], -pivot[2]));
+        this._mOut.multiplyMatrices(this._m, this._mPart);
+        mesh.setMatrixAt(i, this._mOut);
+        continue;
+      }
       if (arms && (part === 'armL' || part === 'armR')) {
         const q = part === 'armR' ? hold.qR : hold.qL;
         if (bob) this._mRot.makeRotationFromQuaternion(this._qArm.copy(this._qBob).multiply(q));

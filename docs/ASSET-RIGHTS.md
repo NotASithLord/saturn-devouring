@@ -7,6 +7,8 @@ MIT for original code and a Halo disclaimer do not resolve the following items.
 | --- | --- | --- |
 | CE rifle mesh/textures | game/assets/rifle/NOTICE.txt says carried from first-strike | Establish original acquisition method and permission for standalone redistribution. |
 | H2/H3 characters | scripts/convert-h3-assets.mjs converts Blackandfan/H3EK-Tags source art | Confirm the source art's governing terms and whether use outside MCC is permitted. Availability in a modding repository is not permission. |
+| H3 Marine mesh, textures, and JMA rifle animations | source-assets/halo3-marine/NOTICE.txt records the Halo Archive, ModDB, and GitHub repositories used for the replacement Marine | Confirm each source's governing terms and permission for standalone distribution. |
+| H3 Orbital wall and floor maps | source-assets/halo3-world/NOTICE.txt records the Halo Archive source folder and converted images | Confirm permission for extraction and standalone distribution. |
 | Flood carrier | Sketchfab upload attributed to jameslucino117, reported CC BY 4.0 | Verify the license and uploader's authority over the included material; retain attribution and modification notice. |
 | WAV recordings | game/audio.js calls them supplied Halo recordings | Record source game, origin, rightsholder, and permission per file, including unused WAVs still shipped. |
 | Vendored code | Three.js, Rapier, THREE.Fire, peerd browser bundle | Complete a dependency notice audit and retain full applicable license texts in distributions. |

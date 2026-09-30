@@ -228,6 +228,10 @@ export function resolveCombat(sim, dt) {
         const selected = selectRifleTarget(s.fireTargetId, candidates);
         const best = selected?.target ?? null;
         const bestRange = selected?.range ?? 0;
+        if (best && (s._aimTargetId !== best.id || sim.t - (s._sawThreatT ?? -99) > P.combat.reactLullSec)) {
+          s._aimTargetId = best.id;
+          s._aimSince = sim.t;
+        }
         s.fireTargetId = best?.id;
         if (!best) continue; // sight ranges differ per shooter position — keep checking the rest
         // STAGGERED REACTION (user: every marine opened up the same instant,
@@ -310,6 +314,10 @@ export function resolveCombat(sim, dt) {
         anyFire = true;
         const range = bestRange;
         let acc = range <= P.combat.rifleFalloffM ? gun.accNear : gun.accFar;
+        // A new contact or target switch does not inherit the previous
+        // target's settled aim. The gain is deterministic and per shooter.
+        const settle = Math.min(1, Math.max(0, (sim.t - (s._aimSince ?? sim.t)) / P.combat.aimSettleSec));
+        acc *= P.combat.aimInitialAccuracy + (1 - P.combat.aimInitialAccuracy) * settle;
         // per-marine marksmanship (user: every shot from every marine landed
         // like a laser) — each shooter is a better or worse shot for life
         acc *= 1 + (marksman01(s.id) * 2 - 1) * P.combat.marksmanSpread;

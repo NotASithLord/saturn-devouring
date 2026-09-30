@@ -1,0 +1,11 @@
+Halo 3 Orbital station surface maps (Microsoft Corporation)
+
+Source: Halo Archive public Orbital bitmaps folder,
+https://drive.google.com/drive/folders/1u04spNJsl5EIFYkFIqFDb6aLEIO9O0C9
+
+Original TIFFs: mc_metal_wall_plate_a_dif, mc_metal_wall_plate_a_zbump,
+mc_metal_floor_a_dif, and mc_metal_floor_a_zbump. Color maps were converted
+to JPEG and bump maps to PNG for Saturn Devouring's interior materials. The
+source and derived maps are Halo content excluded from the project's MIT code
+license. Public availability is not a permission record for redistribution.
+See docs/ASSET-RIGHTS.md.

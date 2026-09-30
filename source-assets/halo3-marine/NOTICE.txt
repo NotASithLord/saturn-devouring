@@ -1,0 +1,18 @@
+Halo 3 Marine source material (Microsoft Corporation)
+
+marine.fbx: Halo Archive public Marine model folder,
+https://drive.google.com/drive/folders/16ZP2Lcsap4fX9ptoMjVpum1shsQYjxRp
+
+bitmaps/*.tif: Halo3 Models Edition, Marine texture paths,
+https://www.moddb.com/games/garrys-mod-10/addons/halo3-models-edition
+
+animations/*: original Halo 3 Marine rifle JMA-family exports from
+77Mynameislol77/HaloAnimationRepository, Halo3-Xbox/data/objects/characters/marine/marine,
+https://github.com/77Mynameislol77/HaloAnimationRepository
+
+Converted for Saturn Devouring into the six-part instanced Marine renderer.
+Geometry was scaled and separated by dominant skin bone; diffuse images were
+resized; source animation bone rotations were sampled and retargeted to the
+rigid parts. The source exports and derived files remain Halo content and are
+excluded from this project's MIT code license. Public availability is not a
+permission record for redistribution. See docs/ASSET-RIGHTS.md.

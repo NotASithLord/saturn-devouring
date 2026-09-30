@@ -403,6 +403,9 @@ export const PARAMS = {
     // to hear it, turn, and re-acquire).
     reactBaseSec: 0.35, reactScatterSec: 0.75, reactBehindSec: 0.9,
     reactLullSec: 4, reactConeRad: 1.2,
+    // Halo 3-style acquisition: a fresh target starts as a hurried shot;
+    // sustained visual tracking settles the aim. A target switch resets it.
+    aimInitialAccuracy: 0.78, aimSettleSec: 1.1,
     // per-marine marksmanship spread: acc multiplier in [1-spread, 1+spread]
     // hashed off the agent id — squads have a good shot and a poor one
     marksmanSpread: 0.25,

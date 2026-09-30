@@ -10,7 +10,8 @@ commercial use, and it grants no rights in Microsoft's intellectual property.
 - Halo names, characters, fiction, designs, trademarks, models, textures, and audio,
   including those embedded in source files or generated bundles.
 - All files under game/assets/; game/characters-data.js,
-  game/carrier-data.js, and game/rifle-model-data.js.
+  game/marine-h3-data.js, game/marine-h3-animations.js,
+  game/carrier-data.js, game/rifle-model-data.js, and source-assets/.
 - Third-party software, including engine/vendor/, vendor/,
   multiplayer/peerd-browser.js, and third-party portions of engine/fx.js.
   Their existing licenses and copyright notices continue to apply.
@@ -40,6 +41,11 @@ from Microsoft and other rightsholders, subject to their terms.
 ## Asset credits and existing licenses
 
 - Halo rifle and character sources: game/assets/rifle/NOTICE.txt.
+- Halo 3 Marine mesh, textures, and original rifle animations:
+  game/assets/characters/H3-MARINE-NOTICE.txt (source copy:
+  source-assets/halo3-marine/NOTICE.txt).
+- Halo 3 Orbital wall and floor maps: game/assets/world/H3-WORLD-NOTICE.txt
+  (source copy: source-assets/halo3-world/NOTICE.txt).
 - Flood carrier: "Enemies>Halo 3>The Flood>Carrier" by jameslucino117,
   https://sketchfab.com/3d-models/enemieshalo-3the-floodcarrier-4050784d47c64ddda37828ddcf600e28
   (reported by the existing asset notice as CC BY 4.0,

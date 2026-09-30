@@ -1113,6 +1113,7 @@ doorwaySquad.objective = { node: sightPair.b.idx, kind: 'sweep' };
 doorwaySim.P.combat.marine.gun.accNear = 1;
 doorwaySim.P.combat.marine.gun.accFar = 1;
 doorwaySim.P.combat.marksmanSpread = 0;
+doorwaySim.P.combat.aimInitialAccuracy = 1;
 doorwaySim.P.darkness.darkAccMult = 1;
 doorwaySim.P.darkness.fogAccMult = 1;
 doorwaySim.P.darkness.unlitAccMult = 1;
@@ -1187,6 +1188,7 @@ assert.equal(closedDoorSim.hasLineOfSight(closedMarine, closedForm), true,
   'approaching bodies must restore geometric LOS once the panel is visibly clear');
 closedDoorSim.P.combat.marine.gun.accNear = 1;
 closedDoorSim.P.combat.marksmanSpread = 0;
+closedDoorSim.P.combat.aimInitialAccuracy = 1;
 closedDoorSim.P.darkness.darkAccMult = 1;
 closedDoorSim.P.darkness.fogAccMult = 1;
 resolveCombat(closedDoorSim, closedDoorSim.dt);

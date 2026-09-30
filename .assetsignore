@@ -5,6 +5,7 @@ node_modules
 dist
 docs
 scripts
+source-assets
 wrangler.jsonc
 package.json
 package-lock.json

@@ -548,11 +548,18 @@ export class World {
 
   _build() {
     const g = this.graph;
-    const floorTexBase = this._deckTex('#242c3a', '#161d28');
-    const wallTexBase = this._wallTex('#3a465c', '#2a3446');
-    // MICRO-RELIEF (fidelity pass): the same plate/panel textures double as
-    // bump maps, so plate seams, rivets and conduits catch the flashlight as
-    // real raised detail sweeping past — the cheapest normal-mapping there is.
+    const surface = (name, color = false) => {
+      const map = new THREE.TextureLoader().load(`./assets/world/${name}`);
+      map.wrapS = map.wrapT = THREE.RepeatWrapping;
+      if (color) map.colorSpace = THREE.SRGBColorSpace;
+      return map;
+    };
+    const floorTexBase = surface('h3-floor-color.jpg', true);
+    const floorNormal = surface('h3-floor-normal.png');
+    const wallTexBase = surface('h3-wall-color.jpg', true);
+    const wallNormal = surface('h3-wall-normal.png');
+    // Halo 3's matching normal maps keep panel seams legible under a moving
+    // rifle light without inventing relief from the color map.
     // One material per TINT, all sharing the one deck-plate texture (swarm
     // finding: cloning the 512² CanvasTexture per room uploaded ~63 copies —
     // ~90MB of GPU memory — and the unique materials blocked floor batching).
@@ -563,7 +570,7 @@ export class World {
       if (!m) {
         m = new THREE.MeshStandardMaterial({
           map: floorTexBase, color: tint, roughness: 0.85, metalness: 0.35,
-          bumpMap: floorTexBase, bumpScale: 0.6,
+          normalMap: floorNormal, normalScale: new THREE.Vector2(0.38, 0.38),
         });
         floorMats.set(tint, m);
       }
@@ -576,9 +583,17 @@ export class World {
       return geo;
     };
     this._scaleFloorUV = scaleFloorUV;
+    const scaleWallUV = (geo) => {
+      const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
+      for (let i = 0; i < uv.count; i++) {
+        const horizontal = Math.abs(n.getX(i)) > 0.5 ? p.getZ(i) : p.getX(i);
+        uv.setXY(i, horizontal / 2.0, p.getY(i) / 3.0);
+      }
+      return geo;
+    };
     this._matWall = new THREE.MeshStandardMaterial({
-      map: wallTexBase, color: 0xaebdd8, roughness: 0.7, metalness: 0.5,
-      bumpMap: wallTexBase, bumpScale: 0.5,
+      map: wallTexBase, color: 0xd5dfeb, roughness: 0.7, metalness: 0.5,
+      normalMap: wallNormal, normalScale: new THREE.Vector2(0.35, 0.35),
     });
     const matWall = this._matWall;
     const matWindowFrame = new THREE.MeshStandardMaterial({
@@ -787,7 +802,7 @@ export class World {
           for (const c of cuts) {
             const hh = roomH - CLEAR_H;
             const header = new THREE.Mesh(
-              run.horiz ? new THREE.BoxGeometry(DOOR_W, hh, WALL_T) : new THREE.BoxGeometry(WALL_T, hh, DOOR_W),
+              scaleWallUV(run.horiz ? new THREE.BoxGeometry(DOOR_W, hh, WALL_T) : new THREE.BoxGeometry(WALL_T, hh, DOOR_W)),
               matWall);
             if (run.horiz) header.position.set(c.at, elev + CLEAR_H + hh / 2, run.fixed);
             else header.position.set(run.fixed, elev + CLEAR_H + hh / 2, c.at);
@@ -798,7 +813,7 @@ export class World {
         const addWallBox = (a, b, y, height) => {
           const len = b - a;
           const wall = new THREE.Mesh(
-            run.horiz ? new THREE.BoxGeometry(len, height, WALL_T) : new THREE.BoxGeometry(WALL_T, height, len),
+            scaleWallUV(run.horiz ? new THREE.BoxGeometry(len, height, WALL_T) : new THREE.BoxGeometry(WALL_T, height, len)),
             matWall);
           if (run.horiz) wall.position.set((a + b) / 2, y, run.fixed);
           else wall.position.set(run.fixed, y, (a + b) / 2);

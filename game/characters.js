@@ -6,6 +6,7 @@
 
 import * as THREE from '../engine/vendor/three.webgpu.module.js';
 import { CHARACTERS } from './characters-data.js';
+import { H3_MARINE } from './marine-h3-data.js';
 
 const texLoader = new THREE.TextureLoader();
 const texCache = {};
@@ -26,7 +27,7 @@ const texFor = (name) => {
 // swings each limb about its pivot for the procedural walk/attack cycles.
 export const characterParts = (name) => {
   if (partCache.has(name)) return partCache.get(name);
-  const model = CHARACTERS[name];
+  const model = name === 'marine' ? H3_MARINE : CHARACTERS[name];
   const parts = model.groups.map((g) => {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
