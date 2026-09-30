@@ -207,6 +207,7 @@ export class RagdollSystem {
       groundYAt,
       ceilYAt,
       collideXZ,
+      limbGeom: pose.limbGeom ?? p.limbGeom,
       asleep: false,
       sleepT: 0,
       seq: this._seq++,
@@ -534,7 +535,9 @@ export class RagdollSystem {
     // limit so it can't fold through the body.
     const gLocal = qrot(qconj(r.rootQuat), [0, -1, 0]); // world-down in torso frame
     for (let k = 0; k < RAGDOLL_LIMBS.length; k++) {
-      const { part, axis } = RAGDOLL_LIMBS[k];
+      const { part } = RAGDOLL_LIMBS[k];
+      const geom = (r.limbGeom && r.limbGeom[part]) || RAGDOLL_LIMBS[k];
+      const axis = geom.axis ?? RAGDOLL_LIMBS[k].axis;
       const st = r.limbState[part];
       // sag: rotate the limb's current direction toward gravity
       const cur = qrot(st.q, axis);
@@ -567,7 +570,6 @@ export class RagdollSystem {
       // constraints on the limb TIP, both pure corrective rotations about the
       // pivot (no energy injected, unconditionally stable like the root's
       // post-stabilisation):
-      const geom = (p.limbGeom && p.limbGeom[part]) || RAGDOLL_LIMBS[k];
       if (geom.pivot) {
         const reach = geom.len;
         // tip in TORSO-LOCAL space: pivot + swing·(axis·len)

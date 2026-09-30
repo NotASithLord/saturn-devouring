@@ -82432,6 +82432,7 @@ var init_ragdoll = __esm({
           groundYAt,
           ceilYAt,
           collideXZ,
+          limbGeom: pose.limbGeom ?? p2.limbGeom,
           asleep: false,
           sleepT: 0,
           seq: this._seq++,
@@ -82713,7 +82714,9 @@ var init_ragdoll = __esm({
         clampVec(r2.omega, p2.maxAngSpeed);
         const gLocal = qrot(qconj(r2.rootQuat), [0, -1, 0]);
         for (let k2 = 0; k2 < RAGDOLL_LIMBS.length; k2++) {
-          const { part, axis } = RAGDOLL_LIMBS[k2];
+          const { part } = RAGDOLL_LIMBS[k2];
+          const geom = r2.limbGeom && r2.limbGeom[part] || RAGDOLL_LIMBS[k2];
+          const axis = geom.axis ?? RAGDOLL_LIMBS[k2].axis;
           const st = r2.limbState[part];
           const cur = qrot(st.q, axis);
           const tq = cross3(cur, gLocal);
@@ -82739,7 +82742,6 @@ var init_ragdoll = __esm({
             st.omega[1] *= s2 * 0.5;
             st.omega[2] *= s2 * 0.5;
           }
-          const geom = p2.limbGeom && p2.limbGeom[part] || RAGDOLL_LIMBS[k2];
           if (geom.pivot) {
             const reach = geom.len;
             const dLocal = qrot(st.q, axis);
@@ -82834,11 +82836,40 @@ var init_ragdoll = __esm({
 });
 
 // game/ragdoll-clearance.js
-function floorLiftForBounds(bounds, matrix, groundHeightAt, clearance = 0.012) {
+function floorLiftForGeometry(geometry, matrix, groundHeightAt, clearance = 0.025) {
+  let samples = geometry.userData.floorSupport;
+  if (!samples) {
+    const pos = geometry.attributes.position.array;
+    const count = pos.length / 3;
+    const picked = /* @__PURE__ */ new Set();
+    const directions = 256;
+    for (let d2 = 0; d2 < directions; d2++) {
+      const y2 = 1 - 2 * (d2 + 0.5) / directions;
+      const r2 = Math.sqrt(1 - y2 * y2);
+      const a2 = d2 * Math.PI * (3 - Math.sqrt(5));
+      const dx = r2 * Math.cos(a2), dz = r2 * Math.sin(a2);
+      let best = -Infinity, bestIdx = 0;
+      for (let i3 = 0; i3 < count; i3++) {
+        const score = pos[i3 * 3] * dx + pos[i3 * 3 + 1] * y2 + pos[i3 * 3 + 2] * dz;
+        if (score > best) {
+          best = score;
+          bestIdx = i3;
+        }
+      }
+      picked.add(bestIdx);
+    }
+    samples = new Float32Array(picked.size * 3);
+    let i2 = 0;
+    for (const idx of picked) {
+      samples[i2++] = pos[idx * 3];
+      samples[i2++] = pos[idx * 3 + 1];
+      samples[i2++] = pos[idx * 3 + 2];
+    }
+    geometry.userData.floorSupport = samples;
+  }
   let lift = 0;
-  const { min: min3, max: max3 } = bounds;
-  for (let xi = 0; xi < 2; xi++) for (let yi = 0; yi < 2; yi++) for (let zi = 0; zi < 2; zi++) {
-    const x2 = xi ? max3.x : min3.x, y2 = yi ? max3.y : min3.y, z2 = zi ? max3.z : min3.z;
+  for (let i2 = 0; i2 < samples.length; i2 += 3) {
+    const x2 = samples[i2], y2 = samples[i2 + 1], z2 = samples[i2 + 2];
     const wx = matrix[0] * x2 + matrix[4] * y2 + matrix[8] * z2 + matrix[12];
     const wy = matrix[1] * x2 + matrix[5] * y2 + matrix[9] * z2 + matrix[13];
     const wz = matrix[2] * x2 + matrix[6] * y2 + matrix[10] * z2 + matrix[14];
@@ -82884,8 +82915,13 @@ function rigMetrics(parts) {
     return { pivot, len: r2, dir: [tip[0] / r2, tip[1] / r2, tip[2] / r2] };
   };
   const armR = reach("armR"), armL = reach("armL");
+  const limbGeom = {};
+  for (const part of ["head", "armL", "armR", "legL", "legR"]) {
+    const measured = reach(part);
+    if (measured) limbGeom[part] = { pivot: measured.pivot, len: measured.len, axis: measured.dir };
+  }
   const hip = parts.find((p2) => p2.part === "legR" && p2.pivot)?.pivot ?? parts.find((p2) => p2.part === "legL" && p2.pivot)?.pivot;
-  return { armR, armL, legLen: hip ? hip[1] : 0.95 };
+  return { armR, armL, limbGeom, legLen: hip ? hip[1] : 0.95 };
 }
 function solveCarry(rig, over) {
   if (!rig.armR || !rig.armL) return null;
@@ -84543,7 +84579,14 @@ var init_agents3d = __esm({
           const cc = [{ x: 1e9, z: 1e9, y: 0 }, { x: 1e9, z: 1e9, y: 0 }];
           rag = sys.spawn(
             id,
-            { x: landX, y: elev + hoverY, z: landZ, heading, deck },
+            {
+              x: landX,
+              y: elev + hoverY,
+              z: landZ,
+              heading,
+              deck,
+              limbGeom: (f2 === FACTION.CORPSE ? flags & FLAG.ARMED_HOST ? this.armedSet : this.civSet : flags & FLAG.ARMED_HOST ? this.combatOdstSet : this.combatCivSet).rig.limbGeom
+            },
             impulse,
             (x2, z2) => this.world.groundHeightAt(deck, x2, z2),
             (x2, z2) => {
@@ -84732,7 +84775,6 @@ var init_agents3d = __esm({
         const ground = (x2, z2) => this.world.groundHeightAt(rag.deck, x2, z2);
         let lift = 0;
         for (const mesh of set) {
-          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
           const pivot = mesh.userData.pivot;
           const lq = pivot ? rag.limbs[mesh.userData.part] : null;
           let matrix = this._m;
@@ -84742,8 +84784,8 @@ var init_agents3d = __esm({
             this._mPart.makeTranslation(...pivot).multiply(this._mRot).multiply(this._mOut.makeTranslation(-pivot[0], -pivot[1], -pivot[2]));
             matrix = this._mOut.multiplyMatrices(this._m, this._mPart);
           }
-          lift = Math.max(lift, floorLiftForBounds(
-            mesh.geometry.boundingBox,
+          lift = Math.max(lift, floorLiftForGeometry(
+            mesh.geometry,
             matrix.elements,
             ground
           ));
@@ -84754,10 +84796,9 @@ var init_agents3d = __esm({
         const ground = (x2, z2) => this.world.groundHeightAt(deck, x2, z2);
         let lift = 0;
         for (const mesh of set) {
-          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
           mesh.getMatrixAt(slot, this._mOut);
-          lift = Math.max(lift, floorLiftForBounds(
-            mesh.geometry.boundingBox,
+          lift = Math.max(lift, floorLiftForGeometry(
+            mesh.geometry,
             this._mOut.elements,
             ground
           ));

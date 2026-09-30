@@ -12,7 +12,7 @@ import { characterParts } from './characters.js';
 import { H3_MARINE_ANIMATIONS } from './marine-h3-animations.js';
 import { buildCarrier, CarrierAnimator, SACK_BLOAT_M } from './carrier-model.js';
 import { RagdollSystem } from '../engine/physics/ragdoll.js';
-import { floorLiftForBounds } from './ragdoll-clearance.js';
+import { floorLiftForGeometry } from './ragdoll-clearance.js';
 import { TASK } from '../sim/hive.js';
 import { combatAttackArmPose, combatChargeArmPose } from '../sim/charge-pose.js';
 
@@ -222,7 +222,7 @@ function commitInstanced(mesh, count) {
 // how far its fingertips sit from the shoulder. That radius is fixed — a rigid
 // arm's hand is ALWAYS exactly that far out — so it is the number every carry
 // and every swing has to respect.
-function rigMetrics(parts) {
+export function rigMetrics(parts) {
   const reach = (part) => {
     let pivot = null, best = 0, tip = null;
     for (const p of parts) {
@@ -240,9 +240,14 @@ function rigMetrics(parts) {
     return { pivot, len: r, dir: [tip[0] / r, tip[1] / r, tip[2] / r] };
   };
   const armR = reach('armR'), armL = reach('armL');
+  const limbGeom = {};
+  for (const part of ['head', 'armL', 'armR', 'legL', 'legR']) {
+    const measured = reach(part);
+    if (measured) limbGeom[part] = { pivot: measured.pivot, len: measured.len, axis: measured.dir };
+  }
   const hip = parts.find((p) => p.part === 'legR' && p.pivot)?.pivot
     ?? parts.find((p) => p.part === 'legL' && p.pivot)?.pivot;
-  return { armR, armL, legLen: hip ? hip[1] : 0.95 };
+  return { armR, armL, limbGeom, legLen: hip ? hip[1] : 0.95 };
 }
 
 // Solve the two arm rotations that put this body's hands on a rifle carried at
@@ -2054,7 +2059,10 @@ export class Agents3D {
       // re-resolve every call), re-resolved after >0.5m of lateral travel.
       const cc = [{ x: 1e9, z: 1e9, y: 0 }, { x: 1e9, z: 1e9, y: 0 }];
       rag = sys.spawn(id,
-        { x: landX, y: elev + hoverY, z: landZ, heading, deck },
+        { x: landX, y: elev + hoverY, z: landZ, heading, deck,
+          limbGeom: (f === FACTION.CORPSE
+            ? (flags & FLAG.ARMED_HOST ? this.armedSet : this.civSet)
+            : (flags & FLAG.ARMED_HOST ? this.combatOdstSet : this.combatCivSet)).rig.limbGeom },
         impulse,
         (x, z) => this.world.groundHeightAt(deck, x, z),
         (x, z) => {
@@ -2239,7 +2247,6 @@ export class Agents3D {
     const ground = (x, z) => this.world.groundHeightAt(rag.deck, x, z);
     let lift = 0;
     for (const mesh of set) {
-      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
       const pivot = mesh.userData.pivot;
       const lq = pivot ? rag.limbs[mesh.userData.part] : null;
       let matrix = this._m;
@@ -2251,7 +2258,7 @@ export class Agents3D {
           .multiply(this._mOut.makeTranslation(-pivot[0], -pivot[1], -pivot[2]));
         matrix = this._mOut.multiplyMatrices(this._m, this._mPart);
       }
-      lift = Math.max(lift, floorLiftForBounds(mesh.geometry.boundingBox,
+      lift = Math.max(lift, floorLiftForGeometry(mesh.geometry,
         matrix.elements, ground));
     }
     return lift;
@@ -2261,9 +2268,8 @@ export class Agents3D {
     const ground = (x, z) => this.world.groundHeightAt(deck, x, z);
     let lift = 0;
     for (const mesh of set) {
-      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
       mesh.getMatrixAt(slot, this._mOut);
-      lift = Math.max(lift, floorLiftForBounds(mesh.geometry.boundingBox,
+      lift = Math.max(lift, floorLiftForGeometry(mesh.geometry,
         this._mOut.elements, ground));
     }
     if (lift <= 0) return;
