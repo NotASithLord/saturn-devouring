@@ -81549,8 +81549,10 @@ var init_world = __esm({
       // mover record, so this stricter point test keeps a melee-launched body from
       // ghosting through the visible panels.
       ragdollBlocked(deck, wx, wz, radius = 0.3) {
-        const [sx, sy] = this.worldToSim(wx, wz, deck);
-        if (!this.isWalkable(deck, sx, sy) || this.propBlocked(deck, sx, sy)) return true;
+        for (const [dx, dz] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
+          const [sx, sy] = this.worldToSim(wx + dx, wz + dz, deck);
+          if (!this.isWalkable(deck, sx, sy) || this.propBlocked(deck, sx, sy)) return true;
+        }
         for (const d2 of this.doors) {
           if (d2.deck !== deck || d2.open01 >= 0.92 || d2.edge.busted) continue;
           const dx = wx - d2.x, dz = wz - d2.z;
@@ -82630,6 +82632,37 @@ var init_ragdoll = __esm({
                 st.omega[0] *= 0.7;
                 st.omega[1] *= 0.7;
                 st.omega[2] *= 0.7;
+              }
+            }
+            if (r2.collideXZ) {
+              const pivotOff = qrot(r2.rootQuat, geom.pivot);
+              const pivotW = [r2.rootPos[0] + pivotOff[0], r2.rootPos[1] + pivotOff[1], r2.rootPos[2] + pivotOff[2]];
+              const dirW = qrot(r2.rootQuat, qrot(st.q, axis));
+              const hit = r2.collideXZ(
+                pivotW[0],
+                pivotW[2],
+                pivotW[0] + dirW[0] * reach,
+                pivotW[2] + dirW[2] * reach,
+                p2.limbRadius
+              );
+              if (hit) {
+                const hx = hit.x - pivotW[0], hz = hit.z - pivotW[2];
+                const horizontal = Math.min(Math.hypot(hx, hz), reach * 0.999);
+                const rise = Math.sqrt(Math.max(0, reach * reach - horizontal * horizontal));
+                const downY = pivotW[1] - rise;
+                const floorY = r2.groundYAt(hit.x, hit.z) + p2.limbRadius;
+                const y2 = dirW[1] < 0 && downY >= floorY ? -rise : rise;
+                const desired = [hx / reach, y2 / reach, hz / reach];
+                const axisW = cross3(dirW, desired);
+                const angle = Math.atan2(len3(axisW), Math.max(-1, Math.min(1, dot3(dirW, desired))));
+                if (angle > 1e-6) {
+                  const qw = qAxisAngle(axisW, Math.min(angle, 0.6));
+                  const ql = qmul(qmul(qconj(r2.rootQuat), qw), r2.rootQuat);
+                  st.q = qnorm(qmul(ql, st.q));
+                  st.omega[0] *= 0.65;
+                  st.omega[1] *= 0.65;
+                  st.omega[2] *= 0.65;
+                }
               }
             }
           }
@@ -84398,7 +84431,7 @@ var init_agents3d = __esm({
             ci = counts.combatCiv++;
           }
         }
-        rag.visualLift = thrashing ? this._ragdollFloorLift(set, rag) : 0;
+        rag.visualLift = this._ragdollFloorLift(set, rag);
         this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]]);
         this._stampRagdoll(set, ci, rag);
         if (flags & FLAG.ARMED_HOST) {
@@ -94209,6 +94242,46 @@ var init_spore_fx = __esm({
   }
 });
 
+// game/death-camera.js
+function deathCameraPose(anchor, rayDistance, groundHeight, ceilingHeight) {
+  const focus = [anchor.x, anchor.y + (anchor.prone ? 0.45 : 1.05), anchor.z];
+  const height = anchor.prone ? 1.65 : 2.15;
+  let best = null;
+  for (const turn of [0, Math.PI / 2, -Math.PI / 2, Math.PI]) {
+    const angle = anchor.heading + turn;
+    const goal = [
+      anchor.x - Math.cos(angle) * 3.6,
+      anchor.y + height,
+      anchor.z - Math.sin(angle) * 3.6
+    ];
+    const dx = goal[0] - focus[0], dy = goal[1] - focus[1], dz = goal[2] - focus[2];
+    const length3 = Math.hypot(dx, dy, dz);
+    const clear = Math.max(0, Math.min(length3, rayDistance(focus, goal) - 0.28));
+    if (!best || clear > best.clear) {
+      best = { clear, position: [
+        focus[0] + dx * clear / length3,
+        focus[1] + dy * clear / length3,
+        focus[2] + dz * clear / length3
+      ] };
+    }
+    if (clear >= length3 - 0.01) break;
+  }
+  if (best.clear < 1.2) {
+    const top = Math.min(ceilingHeight(anchor.x, anchor.z) - 0.3, focus[1] + 2);
+    best.position = [anchor.x, Math.max(focus[1] + 0.75, top), anchor.z];
+  }
+  const p2 = best.position;
+  p2[1] = Math.max(
+    groundHeight(p2[0], p2[2]) + 0.3,
+    Math.min(ceilingHeight(p2[0], p2[2]) - 0.3, p2[1])
+  );
+  return { focus, position: p2 };
+}
+var init_death_camera = __esm({
+  "game/death-camera.js"() {
+  }
+});
+
 // game/main.js?v=1
 var main_exports = {};
 function setInputMode(mode) {
@@ -95896,23 +95969,23 @@ function updateAfterlife(now) {
 function placeDeathCamera(agent) {
   const anchor = agents.cameraAnchor(agent);
   if (!anchor) return null;
-  const lift = anchor.prone ? 0.45 : 1.05;
-  deathFocus.set(anchor.x, anchor.y + lift, anchor.z);
-  deathDesired.set(
-    anchor.x - Math.cos(anchor.heading) * 3.6,
-    anchor.y + (anchor.prone ? 1.65 : 2.15),
-    anchor.z - Math.sin(anchor.heading) * 3.6
+  const pose = deathCameraPose(
+    anchor,
+    (from, to) => {
+      deathFocus.set(...from);
+      deathDesired.set(...to);
+      deathDirection.subVectors(deathDesired, deathFocus);
+      const distance3 = deathDirection.length();
+      deathCamRay.set(deathFocus, deathDirection.normalize());
+      deathCamRay.near = 0.18;
+      deathCamRay.far = distance3;
+      return deathCamRay.intersectObjects(solidsForShot(), false)[0]?.distance ?? Infinity;
+    },
+    (x2, z2) => world.groundHeightAt(anchor.deck, x2, z2),
+    (x2, z2) => elevOf(anchor.deck) + world.ceilHeightAt(anchor.deck, x2, z2)
   );
-  deathDirection.subVectors(deathDesired, deathFocus);
-  const distance3 = deathDirection.length();
-  deathCamRay.set(deathFocus, deathDirection.normalize());
-  deathCamRay.near = 0.18;
-  deathCamRay.far = distance3;
-  const hit = deathCamRay.intersectObjects(solidsForShot(), false)[0];
-  if (hit) deathDesired.copy(deathFocus).addScaledVector(deathDirection, Math.max(0.35, hit.distance - 0.28));
-  const floor3 = world.groundHeightAt(anchor.deck, deathDesired.x, deathDesired.z, deathDesired.y);
-  const ceiling = elevOf(anchor.deck) + world.ceilHeightAt(anchor.deck, deathDesired.x, deathDesired.z);
-  deathDesired.y = Math.max(floor3 + 0.3, Math.min(ceiling - 0.3, deathDesired.y));
+  deathFocus.set(...pose.focus);
+  deathDesired.set(...pose.position);
   camera.position.copy(deathDesired);
   camera.lookAt(deathFocus);
   _fillX = deathDesired.x;
@@ -96483,6 +96556,7 @@ var init_main = __esm({
     init_gamepad();
     init_spore_fx();
     init_intro_crawl();
+    init_death_camera();
     canvas = document.getElementById("c");
     gamepad = new StandardGamepad();
     inputMode = document.body.dataset.input === "gamepad" ? "gamepad" : "keyboard";

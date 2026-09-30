@@ -9,7 +9,7 @@
     "headless": "node sim/headless.js",
     "determinism": "node sim/determinism-check.js",
     "physics": "node engine/physics/physics-check.mjs",
-    "ragdoll": "node engine/physics/ragdoll-check.mjs && node game/ragdoll-clearance-check.mjs",
+    "ragdoll": "node engine/physics/ragdoll-check.mjs && node game/ragdoll-clearance-check.mjs && node game/death-camera-check.mjs",
     "melee": "node sim/melee-check.mjs",
     "tactics": "node sim/combat-tactics-check.mjs",
     "charge-pose": "node sim/charge-pose-check.mjs",

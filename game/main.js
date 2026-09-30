@@ -33,6 +33,7 @@ import { createGameSync } from '../multiplayer/game-sync.js';
 import { StandardGamepad, halo3Actions, singleActionPress } from './gamepad.js';
 import { SporeFX } from './spore-fx.js';
 import { activeIntroCrawl, beginIntroCrawl, introBody } from './intro-crawl.js';
+import { deathCameraPose } from './death-camera.js';
 
 const canvas = document.getElementById('c');
 const gamepad = new StandardGamepad();
@@ -3553,22 +3554,18 @@ function updateAfterlife(now) {
 function placeDeathCamera(agent) {
   const anchor = agents.cameraAnchor(agent);
   if (!anchor) return null;
-  const lift = anchor.prone ? 0.45 : 1.05;
-  deathFocus.set(anchor.x, anchor.y + lift, anchor.z);
-  deathDesired.set(
-    anchor.x - Math.cos(anchor.heading) * 3.6,
-    anchor.y + (anchor.prone ? 1.65 : 2.15),
-    anchor.z - Math.sin(anchor.heading) * 3.6,
-  );
-  deathDirection.subVectors(deathDesired, deathFocus);
-  const distance = deathDirection.length();
-  deathCamRay.set(deathFocus, deathDirection.normalize());
-  deathCamRay.near = 0.18; deathCamRay.far = distance;
-  const hit = deathCamRay.intersectObjects(solidsForShot(), false)[0];
-  if (hit) deathDesired.copy(deathFocus).addScaledVector(deathDirection, Math.max(0.35, hit.distance - 0.28));
-  const floor = world.groundHeightAt(anchor.deck, deathDesired.x, deathDesired.z, deathDesired.y);
-  const ceiling = elevOf(anchor.deck) + world.ceilHeightAt(anchor.deck, deathDesired.x, deathDesired.z);
-  deathDesired.y = Math.max(floor + 0.3, Math.min(ceiling - 0.3, deathDesired.y));
+  const pose = deathCameraPose(anchor, (from, to) => {
+    deathFocus.set(...from);
+    deathDesired.set(...to);
+    deathDirection.subVectors(deathDesired, deathFocus);
+    const distance = deathDirection.length();
+    deathCamRay.set(deathFocus, deathDirection.normalize());
+    deathCamRay.near = 0.18; deathCamRay.far = distance;
+    return deathCamRay.intersectObjects(solidsForShot(), false)[0]?.distance ?? Infinity;
+  }, (x, z) => world.groundHeightAt(anchor.deck, x, z),
+  (x, z) => elevOf(anchor.deck) + world.ceilHeightAt(anchor.deck, x, z));
+  deathFocus.set(...pose.focus);
+  deathDesired.set(...pose.position);
   camera.position.copy(deathDesired);
   camera.lookAt(deathFocus);
   _fillX = deathDesired.x; _fillY = deathDesired.y; _fillZ = deathDesired.z;

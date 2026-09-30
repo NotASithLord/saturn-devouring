@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { Sim } from '../sim/sim.js';
 import { CLEAR_H, elevOf, floorBandOf } from '../shared/geometry.js';
 import {
+  World,
   exteriorObservationSpan,
   insideHullPoint,
   observationSideForRoom,
@@ -70,5 +71,14 @@ assert.ok(archerFixtures[0].dx < 0 && archerFixtures[2].dx > 0,
 const smallRoom = graph.nodes.find((room) => Math.max(room.w, room.d) <= 14);
 assert.equal(roomLightFixtureLayout(smallRoom).length, 1,
   'small rooms must retain one centered fixture');
+
+const collisionWorld = Object.create(World.prototype);
+collisionWorld.worldToSim = (x, z) => [x, z];
+collisionWorld.isWalkable = (_deck, x) => x >= 0;
+collisionWorld.propBlocked = () => false;
+collisionWorld.doors = [];
+assert.equal(collisionWorld.ragdollBlocked(1, 0.25, 0, 0.3), true,
+  'a ragdoll radius crossing a bulkhead must collide even when its centre is clear');
+assert.equal(collisionWorld.ragdollBlocked(1, 0.6, 0, 0.3), false);
 
 console.log('world connectors and observation windows ✓');

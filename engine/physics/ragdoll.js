@@ -621,6 +621,35 @@ export class RagdollSystem {
             st.omega[0] *= 0.7; st.omega[1] *= 0.7; st.omega[2] *= 0.7;
           }
         }
+        // (c) bulkheads and door panels: the root capsule alone cannot keep
+        // a metre-long leg out of a wall. Sweep the limb from its joint to
+        // its tip and fold the tip back to the last clear point. The vertical
+        // component grows to preserve its length, so the limb rotates rather
+        // than shrinking or dragging the entire corpse away from the wall.
+        if (r.collideXZ) {
+          const pivotOff = qrot(r.rootQuat, geom.pivot);
+          const pivotW = [r.rootPos[0] + pivotOff[0], r.rootPos[1] + pivotOff[1], r.rootPos[2] + pivotOff[2]];
+          const dirW = qrot(r.rootQuat, qrot(st.q, axis));
+          const hit = r.collideXZ(pivotW[0], pivotW[2],
+            pivotW[0] + dirW[0] * reach, pivotW[2] + dirW[2] * reach, p.limbRadius);
+          if (hit) {
+            const hx = hit.x - pivotW[0], hz = hit.z - pivotW[2];
+            const horizontal = Math.min(Math.hypot(hx, hz), reach * 0.999);
+            const rise = Math.sqrt(Math.max(0, reach * reach - horizontal * horizontal));
+            const downY = pivotW[1] - rise;
+            const floorY = r.groundYAt(hit.x, hit.z) + p.limbRadius;
+            const y = dirW[1] < 0 && downY >= floorY ? -rise : rise;
+            const desired = [hx / reach, y / reach, hz / reach];
+            const axisW = cross3(dirW, desired);
+            const angle = Math.atan2(len3(axisW), Math.max(-1, Math.min(1, dot3(dirW, desired))));
+            if (angle > 1e-6) {
+              const qw = qAxisAngle(axisW, Math.min(angle, 0.6));
+              const ql = qmul(qmul(qconj(r.rootQuat), qw), r.rootQuat);
+              st.q = qnorm(qmul(ql, st.q));
+              st.omega[0] *= 0.65; st.omega[1] *= 0.65; st.omega[2] *= 0.65;
+            }
+          }
+        }
       }
       r.limbs[part] = st.q;
     }

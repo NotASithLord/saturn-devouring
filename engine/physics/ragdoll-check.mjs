@@ -301,5 +301,33 @@ let ok = true;
     `farthestX=${farthestX.toFixed(3)} wallX=${wallX} reflected=${reflected}`);
 }
 
+// 13) a swinging leg or arm cannot pass through a wall while its torso stays
+// on the clear side. This was visible in casualty close-ups near bulkheads.
+{
+  const wallX = 0;
+  let worstPen = 0;
+  for (let id = 1; id <= 30; id++) {
+    const sys = new RagdollSystem(RP);
+    const rag = sys.spawn(id, { x: 0.55, y: 0, z: 0, heading: id * 0.3, deck: 1 },
+      { dirX: -1, dirZ: 0, speed: 4, up: 2, spin: 8, kick: 12 }, () => 0, null,
+      (fromX, fromZ, toX, toZ, radius) => toX - radius < wallX
+        ? { x: wallX + radius + 0.001, z: toZ, nx: 1, nz: 0 } : null);
+    for (let step = 0; step < 180; step++) {
+      sys.step(1 / 60);
+      if (step < 10) continue; // the initial standing pose may touch the wall
+      for (let k = 0; k < RAGDOLL_LIMBS.length; k++) {
+        const { part, axis } = RAGDOLL_LIMBS[k];
+        const geom = RP.limbGeom?.[part] ?? RAGDOLL_LIMBS[k];
+        const pv = rotY(rag.rootQuat, geom.pivot);
+        const dir = rotY(rag.rootQuat, rotY(rag.limbs[part], axis));
+        const tipX = rag.rootPos[0] + pv[0] + dir[0] * geom.len;
+        worstPen = Math.max(worstPen, wallX + sys.p.limbRadius - tipX);
+      }
+    }
+  }
+  ok &= assert('limb tips stay clear of bulkheads after impact', worstPen < 0.02,
+    `worst wall penetration=${worstPen.toFixed(4)} m`);
+}
+
 console.log(ok ? '\nragdoll-check OK' : '\nragdoll-check FAILED');
 process.exit(ok ? 0 : 1);

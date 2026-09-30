@@ -2033,8 +2033,12 @@ export class World {
   // mover record, so this stricter point test keeps a melee-launched body from
   // ghosting through the visible panels.
   ragdollBlocked(deck, wx, wz, radius = 0.3) {
-    const [sx, sy] = this.worldToSim(wx, wz, deck);
-    if (!this.isWalkable(deck, sx, sy) || this.propBlocked(deck, sx, sy)) return true;
+    // The old check tested only the centre. A torso or limb could therefore
+    // sit partly inside a bulkhead or prop while its centre was still legal.
+    for (const [dx, dz] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
+      const [sx, sy] = this.worldToSim(wx + dx, wz + dz, deck);
+      if (!this.isWalkable(deck, sx, sy) || this.propBlocked(deck, sx, sy)) return true;
+    }
     for (const d of this.doors) {
       if (d.deck !== deck || d.open01 >= 0.92 || d.edge.busted) continue;
       const dx = wx - d.x, dz = wz - d.z;

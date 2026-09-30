@@ -2097,7 +2097,7 @@ export class Agents3D {
       if (flags & FLAG.ARMED_HOST) { set = this.combatOdstSet; ci = counts.combatOdst++; }
       else { set = this.combatCivSet; ci = counts.combatCiv++; }
     }
-    rag.visualLift = thrashing ? this._ragdollFloorLift(set, rag) : 0;
+    rag.visualLift = this._ragdollFloorLift(set, rag);
     // Use the displayed height for the rise/camera handoff too. The physics
     // capsule can clear the floor while a long rendered limb still penetrates.
     this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1] + (rag.visualLift ?? 0), rag.rootPos[2]]);
