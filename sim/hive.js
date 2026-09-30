@@ -127,6 +127,27 @@ export class Hive {
     this.marinesBelieved = Math.max(0, this.marinesBelieved - 1);
   }
 
+  // A form that is shot shares the shooter's last known room even if that
+  // form is destroyed before the next strategic observation. This is a
+  // location report, not live tracking: it expires, or a form clears the room.
+  noteHumanAttack(attacker, witness) {
+    if (!attacker || !isLivingHuman(attacker)) return;
+    const seen = new Map([[attacker.id, attacker]]);
+    // The dying form reports the rest of the squad it could life-sense in
+    // its local cell, not just the one rifle that landed the final round.
+    for (const node of this.sim.floodSenses(witness.pnode ?? witness.node)) {
+      for (const human of this.sim.occupants(node)) {
+        if (isLivingHuman(human)) seen.set(human.id, human);
+      }
+    }
+    for (const human of seen.values()) {
+      this.beliefs.set(human.id, {
+        node: human.pnode ?? human.node, t: this.sim.t, conf: 1,
+        contactUntil: this.sim.t + 120,
+      });
+    }
+  }
+
   combatDominates(combatForms) {
     const P = this.sim.P.swarm;
     return combatForms >= Math.max(P.dominationMinForms,
@@ -163,7 +184,12 @@ export class Hive {
     const sim = this.sim, dt = sim.P.sim.strategicTickSec;
     const lambda = sim.P.belief.decayRatePerSec;
     for (const [id, b] of this.beliefs) {
-      if (!b.static) b.conf *= Math.exp(-lambda * dt);
+      if (!b.static) {
+        if (b.contactUntil && b.contactUntil <= sim.t) {
+          b.conf = 0;
+          b.contactUntil = 0;
+        } else if (!b.contactUntil) b.conf *= Math.exp(-lambda * dt);
+      }
       // Losing a position is not learning a death. Keep the absorbed crew
       // identity while confidence falls to zero; the location contributes no
       // tactical weight, but an overwhelming hive still knows somebody is
@@ -177,9 +203,11 @@ export class Hive {
     // actual occupants without teaching the hive anything about distant rooms
     // or hard-coding the ship's current deck layout.
     const seen = new Set();
+    const visited = new Set();
     const observed = new Map(); // node -> shooter weight actually sensed this round
     for (const f of sim.agents) {
       if (f.dead || !isActiveFloodForm(f)) continue;
+      visited.add(f.pnode ?? f.node);
       const shootersByNode = new Map();
       for (const h of this.sensedHumans(f)) {
         const n = h.pnode ?? h.node;
@@ -198,6 +226,12 @@ export class Hive {
         if (shooterW >= 2) this.strongpoints.set(n, { w: shooterW, t: sim.t });
         const prev = observed.get(n);
         if (prev === undefined || shooterW > prev) observed.set(n, shooterW);
+      }
+    }
+    for (const [id, b] of this.beliefs) {
+      if (b.contactUntil && visited.has(b.node) && !seen.has(id)) {
+        b.contactUntil = 0;
+        b.conf = 0;
       }
     }
     // believed strength fields (§13.6): probability mass spreads over nodes

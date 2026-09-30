@@ -72466,6 +72466,26 @@ var init_hive = __esm({
         if (marine?.garrison && marine.deck === 1) return;
         this.marinesBelieved = Math.max(0, this.marinesBelieved - 1);
       }
+      // A form that is shot shares the shooter's last known room even if that
+      // form is destroyed before the next strategic observation. This is a
+      // location report, not live tracking: it expires, or a form clears the room.
+      noteHumanAttack(attacker, witness) {
+        if (!attacker || !isLivingHuman(attacker)) return;
+        const seen = /* @__PURE__ */ new Map([[attacker.id, attacker]]);
+        for (const node of this.sim.floodSenses(witness.pnode ?? witness.node)) {
+          for (const human of this.sim.occupants(node)) {
+            if (isLivingHuman(human)) seen.set(human.id, human);
+          }
+        }
+        for (const human of seen.values()) {
+          this.beliefs.set(human.id, {
+            node: human.pnode ?? human.node,
+            t: this.sim.t,
+            conf: 1,
+            contactUntil: this.sim.t + 120
+          });
+        }
+      }
       combatDominates(combatForms) {
         const P2 = this.sim.P.swarm;
         return combatForms >= Math.max(
@@ -72500,13 +72520,20 @@ var init_hive = __esm({
         const sim2 = this.sim, dt = sim2.P.sim.strategicTickSec;
         const lambda = sim2.P.belief.decayRatePerSec;
         for (const [id, b2] of this.beliefs) {
-          if (!b2.static) b2.conf *= Math.exp(-lambda * dt);
+          if (!b2.static) {
+            if (b2.contactUntil && b2.contactUntil <= sim2.t) {
+              b2.conf = 0;
+              b2.contactUntil = 0;
+            } else if (!b2.contactUntil) b2.conf *= Math.exp(-lambda * dt);
+          }
           if (b2.conf < 0.05) b2.conf = 0;
         }
         const seen = /* @__PURE__ */ new Set();
+        const visited = /* @__PURE__ */ new Set();
         const observed = /* @__PURE__ */ new Map();
         for (const f2 of sim2.agents) {
           if (f2.dead || !isActiveFloodForm(f2)) continue;
+          visited.add(f2.pnode ?? f2.node);
           const shootersByNode = /* @__PURE__ */ new Map();
           for (const h2 of this.sensedHumans(f2)) {
             const n2 = h2.pnode ?? h2.node;
@@ -72521,6 +72548,12 @@ var init_hive = __esm({
             if (shooterW >= 2) this.strongpoints.set(n2, { w: shooterW, t: sim2.t });
             const prev = observed.get(n2);
             if (prev === void 0 || shooterW > prev) observed.set(n2, shooterW);
+          }
+        }
+        for (const [id, b2] of this.beliefs) {
+          if (b2.contactUntil && visited.has(b2.node) && !seen.has(id)) {
+            b2.contactUntil = 0;
+            b2.conf = 0;
           }
         }
         const P2 = sim2.P;
@@ -75396,6 +75429,10 @@ function hurtFloodForm(sim2, a2, dmg, isFlame, by = -1, impact = null) {
   if (by >= 0 && dmg > 0) {
     a2.lastHurtBy = by;
     a2.lastHurtTick = sim2.tickCount;
+    const attacker = sim2.byId.get(by);
+    if (attacker && (sim2.hasLineOfSight(a2, attacker) || sim2.floodSenses(a2.pnode ?? a2.node).includes(attacker.pnode ?? attacker.node))) {
+      sim2.hive?.noteHumanAttack(attacker, a2);
+    }
   }
   if (a2.faction === FACTION.INFECTION) {
     if (isFlame) a2.damage = 100;

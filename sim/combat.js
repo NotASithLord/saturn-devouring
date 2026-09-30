@@ -522,7 +522,15 @@ export function isFlood(a) {
 // the form's shoot-back retargeting — getting shot is now a stimulus.
 export function hurtFloodForm(sim, a, dmg, isFlame, by = -1, impact = null) {
   const P = sim.P;
-  if (by >= 0 && dmg > 0) { a.lastHurtBy = by; a.lastHurtTick = sim.tickCount; }
+  if (by >= 0 && dmg > 0) {
+    a.lastHurtBy = by;
+    a.lastHurtTick = sim.tickCount;
+    const attacker = sim.byId.get(by);
+    if (attacker && (sim.hasLineOfSight(a, attacker)
+      || sim.floodSenses(a.pnode ?? a.node).includes(attacker.pnode ?? attacker.node))) {
+      sim.hive?.noteHumanAttack(attacker, a);
+    }
+  }
   if (a.faction === FACTION.INFECTION) {
     if (isFlame) a.damage = 100;
     sim.removeAgent(a);

@@ -4,6 +4,7 @@ import { makeAgent } from './init.js';
 import { FACTION } from '../shared/agentBuffer.js';
 import { TASK } from './hive.js';
 import { updateFloodTick } from './floodExec.js';
+import { hurtFloodForm } from './combat.js';
 
 function fixture() {
   const sim = new Sim('swarm-recovery');
@@ -79,5 +80,66 @@ function fixture() {
   sim.hive.believedHardness[seed.node]=10;
   updateFloodTick(sim,sim.dt);
   assert.equal(seed.task,null,'unsafe destination releases the seed reservation for replanning');
+}
+{
+  const sim = new Sim('late-game-contact-rally');
+  for (const a of sim.agents) a.dead = true;
+  sim.hive.beliefs.clear();
+  sim.hive.opening = false;
+  sim.hive.marinesBelieved = 8;
+  sim.t = 900;
+  const contact = sim.graph.byId.get('medbay');
+  const distant = sim.graph.nodes.find((n) => sim.graph.hops(n.idx, contact, ['std'], () => true) > 3)?.idx;
+  assert.notEqual(distant, undefined, 'contact fixture needs a remote Flood pocket');
+  const squad = Array.from({ length: 8 }, () => makeAgent(FACTION.MARINE, contact, sim.graph));
+  const player = makeAgent(FACTION.ARMED, contact, sim.graph);
+  player.isPlayer = true;
+  const witness = makeAgent(FACTION.COMBAT, contact, sim.graph);
+  witness.hp = witness.maxHp = 90;
+  const distantForms = Array.from({ length: 150 }, () => {
+    const form = makeAgent(FACTION.COMBAT, distant, sim.graph);
+    form.hp = form.maxHp = 90;
+    return form;
+  });
+  for (const a of [...squad, player, witness, ...distantForms]) sim.spawn(a);
+  sim._refreshOccupancy();
+  hurtFloodForm(sim, witness, 100, false, player.id);
+  assert.equal(witness.downed, true, 'the sole local witness is downed before hive planning');
+  assert.equal(sim.hive.beliefs.get(player.id)?.node, contact,
+    'the shot itself must report the squad room to the shared hive');
+  assert.equal(squad.filter((marine) => sim.hive.beliefs.get(marine.id)?.node === contact).length, 8,
+    'the fallen witness must report the nearby squad, not only its killer');
+  sim._computeInfluence();
+  sim.hive.strategicTick();
+  assert.equal(sim.hive.allIn, true, 'an overwhelming force with a known contact must converge');
+  assert.ok(distantForms.filter((f) => f.task?.node === contact || f.task?.muster === contact).length > 100,
+    'most remote combat forms must join the assault on the reported room');
+  updateFloodTick(sim, sim.dt);
+  assert.ok(distantForms.filter((f) => f.move || f.path.length).length > 100,
+    'the summoned forms must have actual routes toward the contact');
+  sim.t += 60;
+  sim.hive.updateBeliefs();
+  assert.ok(sim.hive.believedHumanStr[contact] > 0,
+    'the attack report must last long enough for distant forms to converge');
+  sim.t += 61;
+  sim.hive.updateBeliefs();
+  assert.equal(sim.hive.beliefs.get(player.id)?.conf, 0,
+    'an unverified battle report must expire instead of tracking the player forever');
+  sim.hive.noteHumanAttack(player, witness);
+  const remoteRoom = sim.graph.node(distant);
+  for (const marine of [...squad, player]) {
+    marine.node = marine.pnode = distant;
+    marine.x = remoteRoom.x; marine.y = remoteRoom.y; marine.deck = remoteRoom.deck;
+  }
+  for (const form of distantForms.slice(1)) form.dead = true;
+  const contactRoom = sim.graph.node(contact);
+  distantForms[0].node = distantForms[0].pnode = contact;
+  distantForms[0].x = contactRoom.x;
+  distantForms[0].y = contactRoom.y;
+  distantForms[0].deck = contactRoom.deck;
+  sim._refreshOccupancy();
+  sim.hive.updateBeliefs();
+  assert.equal(sim.hive.beliefs.get(player.id)?.conf, 0,
+    'a Flood scout finding the reported room empty must clear the stale contact');
 }
 console.log('swarm recovery: arrived and overdue seeds, actual carrier birth, 15-form idle pocket and breeding-starved muster ✓');
