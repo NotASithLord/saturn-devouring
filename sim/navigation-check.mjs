@@ -94,6 +94,25 @@ routeSim._advanceMovement(routeSim.dt);
 assert.equal(routeForm.move, null, 'a disconnected connector must never begin a movement leg');
 assert.equal(routeForm.path.length, 0, 'a disconnected route must be discarded for clean re-planning');
 
+const doorGunSim = new Sim('door-gun-vent-check');
+for (const agent of doorGunSim.agents) agent.dead = true;
+const start = doorGunSim.graph.breachNode;
+const next = [...doorGunSim.graph.neighbors(start, ['std'])][0];
+const safeGoal = doorGunSim.graph.nodes.find((node) =>
+  node.idx !== start && node.idx !== next.to && doorGunSim.hive.infectionSurfaceSafe(node.idx));
+const ventingPod = makeAgent(FACTION.INFECTION, start, doorGunSim.graph);
+const doorwayShooter = makeAgent(FACTION.MARINE, next.to, doorGunSim.graph);
+doorGunSim.spawn(ventingPod);
+doorGunSim.spawn(doorwayShooter);
+doorGunSim._refreshOccupancy();
+doorGunSim.hive.lastScarcity = 0;
+ventingPod.task = { kind: TASK.MOVE, node: safeGoal.idx };
+ventingPod.path = [{ to: next.to, link: next.link, layer: 'std' }];
+updateFloodTick(doorGunSim, doorGunSim.dt);
+assert.equal(ventingPod.path[0]?.layer, 'vent',
+  'a pod must switch to its current room grate before entering a newly guarded doorway');
+assert.equal(ventingPod.path[0]?.to, safeGoal.idx);
+
 // Enclosed vertical links used to expose a climber on the destination hatch
 // halfway through the timer, then leave it standing there for the other half.
 // Pin the topology-derived behavior so every ladder in a future ship layout

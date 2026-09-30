@@ -1372,9 +1372,10 @@ export class Hive {
 
   // THE OPENING SPREAD (user redesign): count the crash room's larder; that
   // many forms stay to eat. Every spare rides the ducts out and disperses —
-  // one ALWAYS to the medbay (the surest helpless conversions on the ship),
-  // the rest to soft spots picked greedily for maximum mutual spread, and
-  // NEVER a marine muster post or a room beside one. Computed once (the
+  // one to the medbay when its grate is safe, otherwise to the nearest quiet
+  // soft room; the rest spread out. Never choose a marine muster post or a
+  // room beside one. On the lower decks at least one pod leaves even when
+  // the crash room has more corpses than pods. Computed once (the
   // assignment map is remembered), so the plan survives re-planning ticks.
   _openingSpread(infection, bodies) {
     if (this._spreadPlan) return this._spreadPlan;
@@ -1389,7 +1390,8 @@ export class Hive {
       ? (g.node(g.breachNode).deck >= 5 ? null : 0)
       : configured;
     const ventCount = fraction === null
-      ? Math.max(0, infection.length - larder)
+      ? Math.max(g.node(g.breachNode).deck >= 4 && infection.length > 1 ? 1 : 0,
+        infection.length - larder)
       : Math.max(0, Math.min(infection.length,
         Math.round(infection.length * Math.max(0, Math.min(1, fraction)))));
     // forms sorted by id: the first group stays to eat, the rest spreads
@@ -1406,7 +1408,7 @@ export class Hive {
       }
     }
     const cands = g.nodes.filter((n) =>
-      n.idx !== g.breachNode && !posts.has(n.idx)
+      n.idx !== g.breachNode && !posts.has(n.idx) && this.infectionSurfaceSafe(n.idx)
       && (n.roles.includes('soft') || n.roles.includes('quarters') || n.roles.includes('medbay')
         || n.roles.includes('cargo') || n.roles.includes('maintenance') || n.roles.includes('corpse_cache')));
     // spread metric in real meters: fore-aft + same-deck beam + a heavy deck
@@ -1416,7 +1418,15 @@ export class Hive {
       + Math.abs(a.deck - b.deck) * 30;
     const chosen = [];
     const medbay = g.byId.get('medbay');
-    if (medbay !== undefined && !posts.has(medbay)) chosen.push(medbay);
+    if (medbay !== undefined && !posts.has(medbay) && this.infectionSurfaceSafe(medbay)) {
+      chosen.push(medbay);
+    } else if (medbay !== undefined && cands.length) {
+      // Armed crew make a lone pod's medbay landing a trap. Give its
+      // opening slot to the nearest quiet soft room instead of sending it
+      // across guarded corridors to a grate it already has in this room.
+      chosen.push(cands.reduce((best, node) =>
+        dist(node, g.node(medbay)) < dist(best, g.node(medbay)) ? node : best).idx);
+    }
     while (chosen.length < spares.length && cands.length) {
       let best = -1, bestScore = -Infinity;
       for (const n of cands) {
@@ -1611,9 +1621,9 @@ export class Hive {
     // infection forms (user redesign): the bodies in the crash room get eaten
     // by as many forms as there are bodies (floodExec's arrive-and-eat rule
     // claims them the same tick), and every SPARE form makes straight for the
-    // room's grate and rides the duct network out — one always to the medbay,
-    // the rest fanned as wide across the ship as the soft spots allow, never
-    // into a marine muster post or a room beside one.
+    // room's grate and rides the duct network out — one toward the medbay
+    // when that exit is quiet, the rest fanned as wide across the ship as
+    // the soft spots allow, never into a marine muster post or its neighbor.
     const plan = this._openingSpread(infection, bodies);
     for (const f of infection) {
       if (f.task && f.task.kind !== TASK.MOVE) continue;

@@ -73521,9 +73521,10 @@ var init_hive = __esm({
       }
       // THE OPENING SPREAD (user redesign): count the crash room's larder; that
       // many forms stay to eat. Every spare rides the ducts out and disperses —
-      // one ALWAYS to the medbay (the surest helpless conversions on the ship),
-      // the rest to soft spots picked greedily for maximum mutual spread, and
-      // NEVER a marine muster post or a room beside one. Computed once (the
+      // one to the medbay when its grate is safe, otherwise to the nearest quiet
+      // soft room; the rest spread out. Never choose a marine muster post or a
+      // room beside one. On the lower decks at least one pod leaves even when
+      // the crash room has more corpses than pods. Computed once (the
       // assignment map is remembered), so the plan survives re-planning ticks.
       _openingSpread(infection, bodies) {
         if (this._spreadPlan) return this._spreadPlan;
@@ -73532,7 +73533,10 @@ var init_hive = __esm({
         const larder = bodies.filter((b2) => b2.node === g2.breachNode && (!sim2.P.hive.openingCountUsableBodies || !b2.dead && b2.damage < 100)).length;
         const configured = sim2.P.hive.openingVentFraction;
         const fraction = configured === "deck-adaptive" ? g2.node(g2.breachNode).deck >= 5 ? null : 0 : configured;
-        const ventCount = fraction === null ? Math.max(0, infection.length - larder) : Math.max(0, Math.min(
+        const ventCount = fraction === null ? Math.max(
+          g2.node(g2.breachNode).deck >= 4 && infection.length > 1 ? 1 : 0,
+          infection.length - larder
+        ) : Math.max(0, Math.min(
           infection.length,
           Math.round(infection.length * Math.max(0, Math.min(1, fraction)))
         ));
@@ -73549,11 +73553,15 @@ var init_hive = __esm({
             for (const { to } of g2.neighbors(n2.idx, ["std"], () => true)) posts.add(to);
           }
         }
-        const cands = g2.nodes.filter((n2) => n2.idx !== g2.breachNode && !posts.has(n2.idx) && (n2.roles.includes("soft") || n2.roles.includes("quarters") || n2.roles.includes("medbay") || n2.roles.includes("cargo") || n2.roles.includes("maintenance") || n2.roles.includes("corpse_cache")));
+        const cands = g2.nodes.filter((n2) => n2.idx !== g2.breachNode && !posts.has(n2.idx) && this.infectionSurfaceSafe(n2.idx) && (n2.roles.includes("soft") || n2.roles.includes("quarters") || n2.roles.includes("medbay") || n2.roles.includes("cargo") || n2.roles.includes("maintenance") || n2.roles.includes("corpse_cache")));
         const dist = (a2, b2) => Math.abs(a2.x - b2.x) + (a2.deck === b2.deck ? Math.abs(a2.y - b2.y) : 0) + Math.abs(a2.deck - b2.deck) * 30;
         const chosen = [];
         const medbay = g2.byId.get("medbay");
-        if (medbay !== void 0 && !posts.has(medbay)) chosen.push(medbay);
+        if (medbay !== void 0 && !posts.has(medbay) && this.infectionSurfaceSafe(medbay)) {
+          chosen.push(medbay);
+        } else if (medbay !== void 0 && cands.length) {
+          chosen.push(cands.reduce((best, node) => dist(node, g2.node(medbay)) < dist(best, g2.node(medbay)) ? node : best).idx);
+        }
         while (chosen.length < spares.length && cands.length) {
           let best = -1, bestScore = -Infinity;
           for (const n2 of cands) {
@@ -74671,7 +74679,7 @@ function updateFloodTick(sim2, dt) {
             break;
           }
         }
-        moveToward(sim2, a2, t2.node, t2.kind === TASK.SCOUT && t2.sweep && a2.faction === FACTION.COMBAT ? (from, to) => hive.searchPath(from, to) : null);
+        moveToward(sim2, a2, t2.node, t2.spread && a2.faction === FACTION.INFECTION ? (from, to) => hive.infectionSurfaceSafe(to) ? sim2.graph.ventRoute(from, to) : hive.safeInfectionPath(from, to) : t2.kind === TASK.SCOUT && t2.sweep && a2.faction === FACTION.COMBAT ? (from, to) => hive.searchPath(from, to) : null);
         if (a2.node === t2.node && !a2.move && (t2.kind === TASK.MOVE || t2.kind === TASK.SCOUT)) a2.task = null;
         break;
       case TASK.ATTACK:
@@ -74891,8 +74899,13 @@ function updateFloodTick(sim2, dt) {
   }
 }
 function moveToward(sim2, a2, node, pathFn = null) {
-  if (a2.move || a2.path.length || a2.node === node) return;
+  if (a2.move || a2.node === node) return;
   const hive = sim2.hive;
+  if (a2.faction === FACTION.INFECTION && a2.path[0]?.layer === "std" && hive.infectionArmedContact(a2.path[0].to) && hive.infectionSurfaceSafe(node)) {
+    sim2.setPath(a2, sim2.graph.ventRoute(a2.node, node));
+    return;
+  }
+  if (a2.path.length) return;
   let path;
   if (pathFn) path = pathFn(a2.node, node);
   else if (a2.faction === FACTION.INFECTION) path = hive.safeInfectionPath(a2.node, node);

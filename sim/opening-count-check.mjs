@@ -41,7 +41,7 @@ for (const [fraction, expected] of [[null, null], [0, 0], [0.75, 8], [1, 10]]) {
   const bodies = sim.agents.filter((a) => a.faction === FACTION.CORPSE);
   const larder = bodies.filter((a) => a.node === sim.graph.breachNode).length;
   const spread = sim.hive._openingSpread(infection, bodies);
-  assert.equal(spread.size, expected ?? Math.max(0, infection.length - larder));
+  assert.equal(spread.size, expected ?? Math.max(1, infection.length - larder));
   assert.equal(infection.filter((a) => a.task?.spread).length, spread.size,
     'opening vent orders must exist before the first actuator tick');
   for (const target of spread.values()) assert.notEqual(target, sim.graph.breachNode);
@@ -53,6 +53,25 @@ for (const [fraction, expected] of [[null, null], [0, 0], [0.75, 8], [1, 10]]) {
 }
 
 console.log('opening dispersion count check ok');
+
+const crowdedLower = new Sim('dispersion-06');
+assert.equal(crowdedLower.graph.node(crowdedLower.graph.breachNode).deck, 5);
+assert.ok(crowdedLower.agents.filter((a) => a.faction === FACTION.CORPSE
+  && a.node === crowdedLower.graph.breachNode).length >= 10);
+assert.equal(crowdedLower.hive._spreadPlan.size, 1,
+  'a crowded lower-deck breach must still dispatch one pod');
+assert.equal([...crowdedLower.hive._spreadPlan.values()][0], crowdedLower.graph.byId.get('medbay'));
+
+const guardedMedbay = new Sim('dispersion-03');
+assert.equal(guardedMedbay.hive.infectionSurfaceSafe(guardedMedbay.graph.byId.get('medbay')), false);
+const quietTarget = [...guardedMedbay.hive._spreadPlan.values()][0];
+assert.notEqual(quietTarget, guardedMedbay.graph.byId.get('medbay'),
+  'a lone opening pod must not surface into an armed medbay');
+const quietRunner = guardedMedbay.agents.find((a) => guardedMedbay.hive._spreadPlan.has(a.id));
+guardedMedbay.tick();
+assert.equal(quietRunner.move?.layer, 'vent',
+  'an opening runner must use the breach room grate, even if the corridor looks shorter');
+assert.equal(quietRunner.move?.to, quietTarget);
 
 const portCapacitor = new Sim('holdout-02');
 assert.equal(portCapacitor.graph.node(portCapacitor.graph.breachNode).id, 'capPort');

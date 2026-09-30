@@ -220,10 +220,12 @@ export function updateFloodTick(sim, dt) {
             break;
           }
         }
-        moveToward(sim, a, t.node, t.kind === TASK.SCOUT && t.sweep
-          && a.faction === FACTION.COMBAT
-          ? (from, to) => hive.searchPath(from, to)
-          : null);
+        moveToward(sim, a, t.node, t.spread && a.faction === FACTION.INFECTION
+          ? (from, to) => hive.infectionSurfaceSafe(to)
+            ? sim.graph.ventRoute(from, to) : hive.safeInfectionPath(from, to)
+          : t.kind === TASK.SCOUT && t.sweep && a.faction === FACTION.COMBAT
+            ? (from, to) => hive.searchPath(from, to)
+            : null);
         if (a.node === t.node && !a.move && (t.kind === TASK.MOVE || t.kind === TASK.SCOUT)) a.task = null;
         break;
 
@@ -479,8 +481,17 @@ export function updateFloodTick(sim, dt) {
 }
 
 function moveToward(sim, a, node, pathFn = null) {
-  if (a.move || a.path.length || a.node === node) return;
+  if (a.move || a.node === node) return;
   const hive = sim.hive;
+  // A pod can sense shooters across the next doorway. If they move into a
+  // route that was quiet when planned, use the grate in its current room;
+  // continuing across that room just to reach a later exit wastes the cover.
+  if (a.faction === FACTION.INFECTION && a.path[0]?.layer === 'std'
+    && hive.infectionArmedContact(a.path[0].to) && hive.infectionSurfaceSafe(node)) {
+    sim.setPath(a, sim.graph.ventRoute(a.node, node));
+    return;
+  }
+  if (a.path.length) return;
   let path;
   if (pathFn) path = pathFn(a.node, node);
   else if (a.faction === FACTION.INFECTION) path = hive.safeInfectionPath(a.node, node);
