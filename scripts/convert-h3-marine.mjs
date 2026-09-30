@@ -21,13 +21,13 @@ const materialTexture = (name) => {
   if (name.startsWith('marine_standard')) return 'h3_marine_standard';
   if (name === 'equipment' || name === 'goggles') return 'h3_marine_equipment';
   if (name === 'comm_pack') return 'h3_marine_backpack';
-  if (name === 'head_smith') return 'h3_marine_head';
-  if (name === 'eyes_smith') return 'h3_marine_eyes';
+  if (name === 'head_gough') return 'h3_marine_head';
+  if (name === 'eyes_gough') return 'h3_marine_eyes';
   if (name === 'marine_mouth' || name === 'teeth') return 'h3_marine_teeth';
   return null; // exclude wound decals and unused permutations
 };
 const chosen = new Set([
-  'bodystandard', 'armsstandard', 'headsmith', 'helmeton',
+  'bodystandard', 'armsstandard', 'headgough', 'helmeton',
   'packs_cheston', 'packs_thighon', 'packs_abdominon',
   'armorpadson', 'comm_packon', 'cheststandard',
 ]);
