@@ -429,10 +429,14 @@ export class Sim {
       const esc = (x, y) => {
         const dW = x - (cx - hx), dE = (cx + hx) - x, dN = y - (cy - hy), dS = (cy + hy) - y;
         const min = Math.min(dW, dE, dN, dS);
-        if (min === dN) return { x, y: cy - HY };
-        if (min === dS) return { x, y: cy + HY };
-        if (min === dW) return { x: cx - HX, y };
-        return { x: cx + HX, y };
+        // Step just beyond the inflated boundary. A point rounded a fraction
+        // inside that boundary recursed forever when a live chaser reached a
+        // corner and replanned on the following tick.
+        const e = 1e-4;
+        if (min === dN) return { x, y: cy - HY - e };
+        if (min === dS) return { x, y: cy + HY + e };
+        if (min === dW) return { x: cx - HX - e, y };
+        return { x: cx + HX + e, y };
       };
       const s2 = inside(sx, sy) ? esc(sx, sy) : null;
       const t2 = inside(tx, ty) ? esc(tx, ty) : null;
@@ -2720,13 +2724,14 @@ export class Sim {
     const LEAP_MIN = 5, PEAK_FRAC = 0.20;
     const C = P.combat;
     const clearH = clearHeightOf(room);
-    const canLeap = a.faction === FACTION.COMBAT && a.charging && clearH > CLEAR_H + 0.5
+    const steer = this._stairSteerTarget(a, room, target.x, target.y);
+    const canLeap = !steer.detouring && a.faction === FACTION.COMBAT && a.charging && clearH > CLEAR_H + 0.5
       && this.t >= a.nextCombatLeapAt;
     // LIVE, which is the user's own word and the thing that matters here: a
     // form heading for a BODY is on TASK.CONVERT/REANIMATE and never reaches
     // this branch, but a GRAB target can die under it mid-approach — pouncing
     // the husk would sail it clean over the corpse it came to burrow into.
-    const canPounce = a.faction === FACTION.INFECTION
+    const canPounce = !steer.detouring && a.faction === FACTION.INFECTION
       && !target.dead && target.hp > 0 && !target.downed && target.faction !== FACTION.CORPSE;
     const gap = Math.hypot(target.x - a.x, target.y - a.y);
     if (!a.leaping && canLeap && gap > LEAP_MIN) {
@@ -2743,9 +2748,11 @@ export class Sim {
     }
 
     // aim at the committed landing spot while airborne, else the live target
-    const aimX = a.leaping ? a.leapTX : target.x;
-    const aimY = a.leaping ? a.leapTY : target.y;
-    const hold = a.leaping ? 0 : stopAt;
+    const aimX = a.leaping ? a.leapTX : steer.x;
+    const aimY = a.leaping ? a.leapTY : steer.y;
+    // Standoff applies to prey, never to an intermediate corner. Stopping a
+    // melee radius short of the corner leaves the wall between hunter and prey.
+    const hold = a.leaping || steer.detouring ? 0 : stopAt;
     const dx = aimX - a.x, dy = aimY - a.y;
     const dist = Math.hypot(dx, dy);
     a.heading = a.leaping ? a.leapHeading : Math.atan2(dy, dx);
@@ -2902,6 +2909,18 @@ export class Sim {
     }
     cache.set(nd.idx, out);
     return out;
+  }
+
+  // Same-room attacks and corpse approaches bypass graph paths. If the live
+  // target is across the stair opening, steer around its edge before charging
+  // again; otherwise _clampToRoom slides the form back into the wall forever.
+  _stairSteerTarget(a, room, tx, ty) {
+    const w = this._stairAvoid(room);
+    if (!w) return { x: tx, y: ty, detouring: false };
+    const margin = this._bodyRadius(a) + 0.25;
+    const pts = this._detourAroundRect(a.x, a.y, tx, ty, w.x, w.y, w.hx, w.hy, margin);
+    const next = pts.find((p) => Math.hypot(p.x - a.x, p.y - a.y) > 0.12);
+    return next ? { ...next, detouring: true } : { x: tx, y: ty, detouring: false };
   }
 
   // slide a point out of the room's stair well/tower rect through the

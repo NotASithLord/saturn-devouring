@@ -74743,13 +74743,17 @@ function updateFloodTick(sim2, dt) {
           break;
         }
         if (a2.node === body.node && !a2.move) {
-          const dx = body.x - a2.x, dy = body.y - a2.y;
-          const d2 = Math.hypot(dx, dy);
-          if (a2.taskProgress === 0 && d2 > sim2.P.combat.seatRangeM) {
+          const gap = Math.hypot(body.x - a2.x, body.y - a2.y);
+          if (a2.taskProgress === 0 && gap > sim2.P.combat.seatRangeM) {
+            const aim = sim2._stairSteerTarget(a2, sim2.graph.node(a2.node), body.x, body.y);
+            const dx = aim.x - a2.x, dy = aim.y - a2.y;
+            const d2 = Math.hypot(dx, dy);
             const mps = sim2.P.movement.baseMps * sim2.P.speed.infection;
             const step3 = Math.min(d2, mps * dt);
-            a2.x += dx / d2 * step3;
-            a2.y += dy / d2 * step3;
+            if (d2 > 1e-9) {
+              a2.x += dx / d2 * step3;
+              a2.y += dy / d2 * step3;
+            }
             a2.heading = Math.atan2(dy, dx);
             a2.animTime += dt;
             break;
@@ -74804,13 +74808,17 @@ function updateFloodTick(sim2, dt) {
           break;
         }
         if (a2.node === target.node && !a2.move) {
-          const dx = target.x - a2.x, dy = target.y - a2.y;
-          const d2 = Math.hypot(dx, dy);
-          if (a2.taskProgress === 0 && d2 > sim2.P.combat.seatRangeM) {
+          const gap = Math.hypot(target.x - a2.x, target.y - a2.y);
+          if (a2.taskProgress === 0 && gap > sim2.P.combat.seatRangeM) {
+            const aim = sim2._stairSteerTarget(a2, sim2.graph.node(a2.node), target.x, target.y);
+            const dx = aim.x - a2.x, dy = aim.y - a2.y;
+            const d2 = Math.hypot(dx, dy);
             const mps = sim2.P.movement.baseMps * sim2.P.speed.infection;
             const step3 = Math.min(d2, mps * dt);
-            a2.x += dx / d2 * step3;
-            a2.y += dy / d2 * step3;
+            if (d2 > 1e-9) {
+              a2.x += dx / d2 * step3;
+              a2.y += dy / d2 * step3;
+            }
             a2.heading = Math.atan2(dy, dx);
             a2.animTime += dt;
             break;
@@ -76192,10 +76200,11 @@ var init_sim = __esm({
           const esc = (x2, y2) => {
             const dW = x2 - (cx - hx), dE = cx + hx - x2, dN = y2 - (cy - hy), dS = cy + hy - y2;
             const min3 = Math.min(dW, dE, dN, dS);
-            if (min3 === dN) return { x: x2, y: cy - HY };
-            if (min3 === dS) return { x: x2, y: cy + HY };
-            if (min3 === dW) return { x: cx - HX, y: y2 };
-            return { x: cx + HX, y: y2 };
+            const e2 = 1e-4;
+            if (min3 === dN) return { x: x2, y: cy - HY - e2 };
+            if (min3 === dS) return { x: x2, y: cy + HY + e2 };
+            if (min3 === dW) return { x: cx - HX - e2, y: y2 };
+            return { x: cx + HX + e2, y: y2 };
           };
           const s2 = inside(sx, sy) ? esc(sx, sy) : null;
           const t2 = inside(tx, ty) ? esc(tx, ty) : null;
@@ -78089,8 +78098,9 @@ var init_sim = __esm({
         const LEAP_MIN = 5, PEAK_FRAC = 0.2;
         const C2 = P2.combat;
         const clearH = clearHeightOf(room);
-        const canLeap = a2.faction === FACTION.COMBAT && a2.charging && clearH > CLEAR_H + 0.5 && this.t >= a2.nextCombatLeapAt;
-        const canPounce = a2.faction === FACTION.INFECTION && !target.dead && target.hp > 0 && !target.downed && target.faction !== FACTION.CORPSE;
+        const steer = this._stairSteerTarget(a2, room, target.x, target.y);
+        const canLeap = !steer.detouring && a2.faction === FACTION.COMBAT && a2.charging && clearH > CLEAR_H + 0.5 && this.t >= a2.nextCombatLeapAt;
+        const canPounce = !steer.detouring && a2.faction === FACTION.INFECTION && !target.dead && target.hp > 0 && !target.downed && target.faction !== FACTION.CORPSE;
         const gap = Math.hypot(target.x - a2.x, target.y - a2.y);
         if (!a2.leaping && canLeap && gap > LEAP_MIN) {
           this._commitLeap(a2, target, room, mps, Math.min(gap * PEAK_FRAC, (clearH - 2.2) * 0.8), 0.35);
@@ -78099,9 +78109,9 @@ var init_sim = __esm({
         } else if (a2.leaping && !canLeap && !canPounce) {
           this._endLeap(a2);
         }
-        const aimX = a2.leaping ? a2.leapTX : target.x;
-        const aimY = a2.leaping ? a2.leapTY : target.y;
-        const hold = a2.leaping ? 0 : stopAt;
+        const aimX = a2.leaping ? a2.leapTX : steer.x;
+        const aimY = a2.leaping ? a2.leapTY : steer.y;
+        const hold = a2.leaping || steer.detouring ? 0 : stopAt;
         const dx = aimX - a2.x, dy = aimY - a2.y;
         const dist = Math.hypot(dx, dy);
         a2.heading = a2.leaping ? a2.leapHeading : Math.atan2(dy, dx);
@@ -78217,6 +78227,17 @@ var init_sim = __esm({
         }
         cache3.set(nd.idx, out);
         return out;
+      }
+      // Same-room attacks and corpse approaches bypass graph paths. If the live
+      // target is across the stair opening, steer around its edge before charging
+      // again; otherwise _clampToRoom slides the form back into the wall forever.
+      _stairSteerTarget(a2, room, tx, ty) {
+        const w4 = this._stairAvoid(room);
+        if (!w4) return { x: tx, y: ty, detouring: false };
+        const margin = this._bodyRadius(a2) + 0.25;
+        const pts = this._detourAroundRect(a2.x, a2.y, tx, ty, w4.x, w4.y, w4.hx, w4.hy, margin);
+        const next = pts.find((p2) => Math.hypot(p2.x - a2.x, p2.y - a2.y) > 0.12);
+        return next ? { ...next, detouring: true } : { x: tx, y: ty, detouring: false };
       }
       // slide a point out of the room's stair well/tower rect through the
       // nearest face (the same rule the render's clamps use), or return it as-is

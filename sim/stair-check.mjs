@@ -16,6 +16,9 @@
 
 import { Sim } from './sim.js';
 import { FACTION } from '../shared/agentBuffer.js';
+import { makeAgent } from './init.js';
+import { TASK } from './hive.js';
+import { updateFloodTick } from './floodExec.js';
 import { CMD } from './commands.js';
 import { elevOf, stairWellDims, switchbackElev } from '../shared/geometry.js';
 
@@ -52,6 +55,43 @@ function mkGround(sim) {
 }
 
 const directions = new Set();
+
+// A chase within one stairwell room bypasses graph routing. Both the upper
+// opening and the lower tower must still be navigable by hunters and pods.
+for (const end of ['upper', 'lower']) {
+  for (const faction of [FACTION.COMBAT, FACTION.INFECTION]) {
+    const sim = new Sim(`stair-chase-${end}-${faction}`);
+    for (const agent of sim.agents) agent.dead = true;
+    const room = sim.graph.node(sim.graph.stairwells[0][end]);
+    const well = sim._stairAvoid(room);
+    const hunter = makeAgent(faction, room.idx, sim.graph);
+    const prey = makeAgent(faction === FACTION.COMBAT ? FACTION.MARINE : FACTION.CORPSE,
+      room.idx, sim.graph);
+    hunter.x = well.x - well.hx - 3; hunter.y = well.y;
+    prey.x = well.x + well.hx + 3; prey.y = well.y;
+    hunter.task = faction === FACTION.COMBAT
+      ? { kind: TASK.ATTACK, targetId: prey.id, node: room.idx, commit: true }
+      : { kind: TASK.CONVERT, corpseId: prey.id };
+    sim.spawn(hunter); sim.spawn(prey);
+    let reached = false;
+    for (let i = 0; i < 250; i++) {
+      if (faction === FACTION.COMBAT) sim._spatialSteer(hunter, sim.dt);
+      else updateFloodTick(sim, sim.dt);
+      if (Math.abs(hunter.x - well.x) < well.hx + 0.48
+        && Math.abs(hunter.y - well.y) < well.hy + 0.48) {
+        fail(`${end} ${faction} crossed the stair opening/tower`);
+      }
+      const contact = faction === FACTION.COMBAT
+        ? sim.P.combat.meleeRangeM : sim.P.combat.seatRangeM;
+      if (Math.hypot(hunter.x - prey.x, hunter.y - prey.y) <= contact) {
+        reached = true; break;
+      }
+    }
+    if (!reached) fail(`${end} ${faction} stalled across the stair opening/tower`);
+  }
+}
+console.log('same-room Flood pursuits route around both stair levels ✓');
+
 function scriptedRun(seed, report) {
   const sim = new Sim(seed);
   // Isolate commanded walking from combat interruptions and faster Flood sprints.

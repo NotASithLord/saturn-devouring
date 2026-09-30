@@ -319,12 +319,14 @@ export function updateFloodTick(sim, dt) {
           // so the pod visibly started converting from beside the body. Now it
           // scuttles the whole way at its real speed and nothing starts until
           // it is within seatRangeM (12 cm — physically astride the corpse).
-          const dx = body.x - a.x, dy = body.y - a.y;
-          const d = Math.hypot(dx, dy);
-          if (a.taskProgress === 0 && d > sim.P.combat.seatRangeM) {
+          const gap = Math.hypot(body.x - a.x, body.y - a.y);
+          if (a.taskProgress === 0 && gap > sim.P.combat.seatRangeM) {
+            const aim = sim._stairSteerTarget(a, sim.graph.node(a.node), body.x, body.y);
+            const dx = aim.x - a.x, dy = aim.y - a.y;
+            const d = Math.hypot(dx, dy);
             const mps = sim.P.movement.baseMps * sim.P.speed.infection;
             const step = Math.min(d, mps * dt);
-            a.x += (dx / d) * step; a.y += (dy / d) * step;
+            if (d > 1e-9) { a.x += (dx / d) * step; a.y += (dy / d) * step; }
             a.heading = Math.atan2(dy, dx); a.animTime += dt;
             break; // still crawling onto the body — not burrowing yet
           }
@@ -388,12 +390,14 @@ export function updateFloodTick(sim, dt) {
         if (a.node === target.node && !a.move) {
           // sit ON the downed form (same right-on-top rule as CONVERT):
           // constant-speed scuttle to within seatRangeM, no ease-out snap
-          const dx = target.x - a.x, dy = target.y - a.y;
-          const d = Math.hypot(dx, dy);
-          if (a.taskProgress === 0 && d > sim.P.combat.seatRangeM) {
+          const gap = Math.hypot(target.x - a.x, target.y - a.y);
+          if (a.taskProgress === 0 && gap > sim.P.combat.seatRangeM) {
+            const aim = sim._stairSteerTarget(a, sim.graph.node(a.node), target.x, target.y);
+            const dx = aim.x - a.x, dy = aim.y - a.y;
+            const d = Math.hypot(dx, dy);
             const mps = sim.P.movement.baseMps * sim.P.speed.infection;
             const step = Math.min(d, mps * dt);
-            a.x += (dx / d) * step; a.y += (dy / d) * step;
+            if (d > 1e-9) { a.x += (dx / d) * step; a.y += (dy / d) * step; }
             a.heading = Math.atan2(dy, dx); a.animTime += dt;
             break;
           }
