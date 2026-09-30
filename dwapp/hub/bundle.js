@@ -69761,14 +69761,6 @@ var init_params = __esm({
           // firing anyway THROUGH a man in the lane
           dmgMult: 0.65,
           // a graze, not a center-mass kill shot
-          sideStepMps: 1.7,
-          // deliberate reposition speed toward a clear lane
-          postShiftM: 0.55,
-          // how far the FIRING POST slides per blocked tick
-          // (the body nudge alone gets dragged back by the
-          // steering layer, which pinned marines forever)
-          flipSec: 1.4,
-          // side still blocked after this long -> try the other
           holdMaxSec: 1.6,
           // a marine who still has no lane after this fires
           // anyway — discipline loses to the thing charging
@@ -71013,8 +71005,6 @@ function makeAgent(kind, node, graph) {
     chargeEndedAt: -Infinity,
     followNode: -1,
     // escort: last node re-pathed toward (humans.js)
-    firePost: null,
-    // [x,y] firing stance a shooter holds in a firefight (sim.js _firingSlot)
     // STABLE HIDDEN CLASS (perf pass 4). Every field ANY later code assigns
     // is pre-declared here, so all agents share ONE V8 shape for their whole
     // life. Before this, ~45 properties were appended at scattered sites
@@ -71044,6 +71034,7 @@ function makeAgent(kind, node, graph) {
     respawnReadyAt: -1,
     closeFollow: false,
     followSpeed: 0,
+    heldCombatGround: false,
     taskProgress: 0,
     pnode: node,
     climbingLink: null,
@@ -71055,8 +71046,6 @@ function makeAgent(kind, node, graph) {
     nextHostShotAt: void 0,
     _sawThreatT: void 0,
     _reactUntil: void 0,
-    _ffSide: void 0,
-    _ffFlipAt: void 0,
     _ffBlockedSince: void 0,
     firstStruckIn: void 0,
     lastHurtBy: void 0,
@@ -71842,25 +71831,10 @@ function updateMarineTick(sim2, a2, dt) {
     a2.state = STATE.FIGHT;
     a2.path = [];
     a2.move = null;
+    a2.heldCombatGround = true;
     const visible = visibleFloodForms(sim2, a2);
     const forms = visible.length;
     a2.givingGround = forms > P2.morale.marineHoldForms;
-    if (a2.flamer && a2.fuel > 0 && visible.length) {
-      let nearest = visible[0], nearestD = Infinity;
-      for (const form of visible) {
-        const d2 = Math.hypot(form.x - a2.x, form.y - a2.y);
-        if (d2 < nearestD) {
-          nearest = form;
-          nearestD = d2;
-        }
-      }
-      if (nearestD > P2.flamethrower.rangeM * 0.88) {
-        const dx = nearest.x - a2.x, dy = nearest.y - a2.y;
-        const d2 = Math.hypot(dx, dy) || 1;
-        const advance = nearestD - P2.flamethrower.rangeM * 0.82;
-        a2.firePost = [a2.x + dx / d2 * advance, a2.y + dy / d2 * advance];
-      }
-    }
     if (a2.givingGround && nearestFloodDist(sim2, a2) < P2.morale.breakContactM) {
       const next = fleeStep(sim2, a2);
       if (next !== null && next !== -1) {
@@ -71957,6 +71931,7 @@ function updateMarineTick(sim2, a2, dt) {
           a2.fuel -= sim2.P.flamethrower.fuelPerCorpse;
           sim2.stats.corpsesBurned++;
           sim2.igniteFlame(a2.node, corpse.x, corpse.y, `marine:${a2.id}`, 0.85);
+          a2.heading = Math.atan2(corpse.y - a2.y, corpse.x - a2.x);
           a2.flameAimX = corpse.x;
           a2.flameAimY = corpse.y;
           a2.flameAimDeck = corpse.deck;
@@ -75074,6 +75049,10 @@ function combatMeleeImpulse(attacker, target, swing) {
 }
 function resolveCombat(sim2, dt) {
   const P2 = sim2.P;
+  const bearingTo = (shooter, target) => Math.atan2(
+    target.y - sim2._bandC(target.deck) + sim2._bandC(shooter.deck) - shooter.y,
+    target.x - shooter.x
+  );
   const groups = /* @__PURE__ */ new Map();
   for (const a2 of sim2.agents) {
     if (a2.dead) continue;
@@ -75166,6 +75145,7 @@ function resolveCombat(sim2, dt) {
         anyFire = true;
         flamer2.fuel = Math.max(0, flamer2.fuel - P2.flamethrower.fuelPerSec * dt);
         const aim = targets[0];
+        flamer2.heading = bearingTo(flamer2, aim);
         const aimNode = aim.pnode ?? aim.node;
         sim2.igniteFlame(aimNode, aim.x, aim.y, `marine:${flamer2.id}`, 1);
         flamer2.flameAimX = aim.x;
@@ -75185,22 +75165,24 @@ function resolveCombat(sim2, dt) {
       for (const s2 of shooters) {
         if (s2 === flamer2) continue;
         if (sim2.t < (s2.nextShotAt ?? 0)) continue;
-        const candidates = sim2.lineOfSightAgents(s2, (t2) => t2.faction === FACTION.COMBAT && !t2.downed || t2.faction === FACTION.INFECTION || t2.faction === FACTION.CARRIER).map((target) => ({ target, range: Math.hypot(target.x - s2.x, target.y - s2.y) }));
+        const candidates = sim2.lineOfSightAgents(s2, (t2) => t2.faction === FACTION.COMBAT && !t2.downed || t2.faction === FACTION.INFECTION || t2.faction === FACTION.CARRIER).map((target) => ({ target, range: sim2.agentDistance(s2, target) }));
         const selected = selectRifleTarget(s2.fireTargetId, candidates);
         const best = selected?.target ?? null;
         const bestRange = selected?.range ?? 0;
         s2.fireTargetId = best?.id;
         if (!best) continue;
         if (sim2.t - (s2._sawThreatT ?? -99) > P2.combat.reactLullSec) {
-          const bearing = Math.atan2(best.y - s2.y, best.x - s2.x);
+          const bearing = bearingTo(s2, best);
           let off = Math.abs(bearing - (s2.heading ?? 0));
           if (off > Math.PI) off = 2 * Math.PI - off;
           const behind = off > P2.combat.reactConeRad;
           s2._reactUntil = sim2.t + P2.combat.reactBaseSec + sim2.rng.range(0, P2.combat.reactScatterSec) + (behind ? P2.combat.reactBehindSec * (0.6 + 0.8 * (off / Math.PI)) : 0);
         }
         s2._sawThreatT = sim2.t;
+        s2.heading = bearingTo(s2, best);
         if (sim2.t < (s2._reactUntil ?? 0)) continue;
-        const ldx = best.x - s2.x, ldy = best.y - s2.y;
+        const ldx = best.x - s2.x;
+        const ldy = best.y - sim2._bandC(best.deck) + sim2._bandC(s2.deck) - s2.y;
         const laneL = Math.hypot(ldx, ldy) || 1e-6;
         const lux = ldx / laneL, luy = ldy / laneL;
         let laneBlocked = false, blocker = null, graze = null, grazeD = Infinity;
@@ -75221,22 +75203,6 @@ function resolveCombat(sim2, dt) {
           }
         }
         if (laneBlocked) {
-          if (s2._ffFlipAt === void 0) s2._ffFlipAt = sim2.t + FF.flipSec;
-          else if (sim2.t >= s2._ffFlipAt) {
-            s2._ffSide = -(s2._ffSide ?? (s2.id & 1 ? 1 : -1));
-            s2._ffFlipAt = sim2.t + FF.flipSec;
-          }
-          const side = s2._ffSide ?? (s2._ffSide = s2.id & 1 ? 1 : -1);
-          const room = sim2.graph.node(s2.pnode ?? s2.node);
-          if (s2.firePost) {
-            const nx = s2.firePost[0] - luy * side * FF.postShiftM;
-            const ny = s2.firePost[1] + lux * side * FF.postShiftM;
-            s2.firePost[0] = Math.max(room.x - room.w / 2 + 0.8, Math.min(room.x + room.w / 2 - 0.8, nx));
-            s2.firePost[1] = Math.max(room.y - room.d / 2 + 0.8, Math.min(room.y + room.d / 2 - 0.8, ny));
-          }
-          s2.x += -luy * side * FF.sideStepMps * dt;
-          s2.y += lux * side * FF.sideStepMps * dt;
-          sim2._clampToRoom(s2, room);
           if (sim2.t - (sim2._ffCallT ?? -999) > FF.callCooldownSec) {
             sim2._ffCallT = sim2.t;
             sim2.log("radio", `check your fire — friendlies in the lane in ${sim2.graph.node(node).name}`, node);
@@ -75245,10 +75211,7 @@ function resolveCombat(sim2, dt) {
           if (sim2.t - s2._ffBlockedSince < FF.holdMaxSec) continue;
           graze = blocker;
           grazeD = 0;
-        } else {
-          s2._ffFlipAt = void 0;
-          s2._ffBlockedSince = void 0;
-        }
+        } else s2._ffBlockedSince = void 0;
         if (s2.escort && s2.mags !== void 0) {
           if (s2.rounds <= 0) {
             if (s2.mags > 0) {
@@ -75393,6 +75356,7 @@ function resolveCombat(sim2, dt) {
         const best = selected?.target ?? null;
         sh.fireTargetId = best?.id;
         if (!best) continue;
+        sh.heading = bearingTo(sh, best);
         if (!stamped) {
           stamped = true;
           sim2.gunfireAt(gunNode);
@@ -76165,8 +76129,15 @@ var init_sim = __esm({
           return false;
         }
         const dx = x2 - x1, dy = y2 - y1;
+        const edgeSlackT = 1.7 / (Math.hypot(dx, dy) || 1);
         let cur = r1, prevT = 1e-9;
         for (let hop = 0; hop < 8; hop++) {
+          const room = g2.node(cur);
+          let exitT = Infinity;
+          if (dx > 1e-9) exitT = Math.min(exitT, (room.x + room.w / 2 - x1) / dx);
+          else if (dx < -1e-9) exitT = Math.min(exitT, (room.x - room.w / 2 - x1) / dx);
+          if (dy > 1e-9) exitT = Math.min(exitT, (room.y + room.d / 2 - y1) / dy);
+          else if (dy < -1e-9) exitT = Math.min(exitT, (room.y - room.d / 2 - y1) / dy);
           let bestTo = -1, bestT = Infinity;
           for (const { to, link } of g2.adj.std[cur]) {
             const o2 = link.losOpen;
@@ -76182,6 +76153,7 @@ var init_sim = __esm({
               cross4 = x1 + dx * t2;
             }
             if (t2 <= prevT || t2 > 1 + 1e-9) continue;
+            if (t2 > exitT + edgeSlackT) continue;
             if (Math.abs(cross4 - o2.c) > 0.85) continue;
             if (t2 < bestT) {
               bestT = t2;
@@ -77400,8 +77372,7 @@ var init_sim = __esm({
       // Individual movement branches used their intended path bearing instead;
       // at cross-deck hatches that could be nearly perpendicular to the real
       // walk, producing a forward gait sliding sideways across the floor.
-      // ATTACK is deliberately excluded: a shooter keeps facing the target while
-      // giving ground or shifting along a firing line.
+      // ATTACK is deliberately excluded: a shooter keeps facing the target.
       _faceWalkingHumans() {
         for (const a2 of this.agents) {
           if (a2.dead || a2.isPlayer || a2.move?.hidden || a2.faction !== FACTION.CIVILIAN && a2.faction !== FACTION.ARMED && a2.faction !== FACTION.MARINE) continue;
@@ -77466,7 +77437,6 @@ var init_sim = __esm({
           if (a2.state === STATE.FIGHT || a2.state === STATE.GRABBING || a2.state === STATE.COWER || a2.state === STATE.AMBUSHING) {
             if (!a2.move) {
               if (a2.state === STATE.COWER) this._parkDrift(a2, dt);
-              else if (a2.state === STATE.FIGHT && (a2.faction === FACTION.MARINE || a2.faction === FACTION.ARMED)) this._firingDrift(a2, dt);
               else {
                 a2.followSpeed = 0;
                 a2.animTime += dt;
@@ -77785,7 +77755,7 @@ var init_sim = __esm({
               retreatSprint: a2.faction === FACTION.COMBAT && a2.task?.retreat === true ? a2.retreatSprint : void 0,
               dartSprint: a2.faction === FACTION.COMBAT && a2.task?.kind === TASK.DART && a2.task.stage === 1
             };
-            a2.firePost = null;
+            a2.heldCombatGround = false;
             if ((link.kind === "vent" || link.kind === "shaft") && this.t - (link._ductLogAt ?? -99) > 12) {
               link._ductLogAt = this.t;
               const A2 = this.graph.node(link.a), B3 = this.graph.node(link.b);
@@ -77913,7 +77883,10 @@ var init_sim = __esm({
             if (queues) link.occupiedBy = a2.id;
             if (a2.state === STATE.IDLE) a2.state = STATE.MOVE;
           } else {
-            this._parkDrift(a2, dt);
+            if (a2.faction === FACTION.MARINE && a2.heldCombatGround) {
+              a2.followSpeed = 0;
+              a2.animTime += dt;
+            } else this._parkDrift(a2, dt);
           }
         }
       }
@@ -78612,75 +78585,6 @@ var init_sim = __esm({
         const b2 = this.byId.get(id);
         if (!b2 || b2.dead) return -1;
         return b2.pnode ?? b2.node;
-      }
-      // FIRING LINE (user note: marines clump in the doorway when a room goes hot —
-      // spread out for wider lines of fire). A marine/armed in FIGHT holds a line
-      // facing the visible Flood. Two stable per-id hashes place each shooter: one
-      // LATERAL (across the line) and one in DEPTH (staggered ranks back from the
-      // front). why: in a long thin artery the line runs athwartships across only
-      // ~4 m, so lateral spread alone just re-made the clump at the junction (user
-      // report: every game they pile at Main Corridor Fore). Staggering the squad
-      // in depth down the corridor's long axis reads as a defensive LANE held back
-      // from the threat, not a knot at the doorway. Both offsets are clamped to the
-      // room's real reach along each axis; _separate resolves hash collisions.
-      // Returns [x, y, fx, fy] (slot + unit facing toward the threat) or null when
-      // there is no Flood in line of sight.
-      _firingSlot(a2, room) {
-        const occ = this._occ[a2.pnode ?? a2.node];
-        if (!occ) return null;
-        let nShoot = 0;
-        for (const o2 of occ) {
-          const f2 = o2.faction;
-          if (f2 === FACTION.MARINE || f2 === FACTION.ARMED) nShoot++;
-        }
-        const threats = this.lineOfSightAgents(a2, (o2) => !o2.downed && (o2.faction === FACTION.COMBAT || o2.faction === FACTION.CARRIER || o2.faction === FACTION.INFECTION));
-        if (!threats.length) return null;
-        let tx = 0, ty = 0;
-        for (const threat of threats) {
-          tx += threat.x;
-          ty += threat.y;
-        }
-        tx /= threats.length;
-        ty /= threats.length;
-        if (!a2.firePost) a2.firePost = [a2.x, a2.y];
-        let hx = a2.firePost[0], hy = a2.firePost[1];
-        const dx = tx - hx, dy = ty - hy;
-        const td = Math.hypot(dx, dy) || 1;
-        const fx = dx / td, fy = dy / td;
-        const MIN = a2.givingGround ? this.P.morale.giveGroundM : this.P.combat.meleeRangeM + 1.5;
-        if (td < MIN) {
-          hx -= fx * (MIN - td);
-          hy -= fy * (MIN - td);
-          a2.firePost[0] = hx;
-          a2.firePost[1] = hy;
-        }
-        const px2 = -fy, py2 = fx;
-        const hw = Math.max(0.7, room.w / 2 - 1), hd = Math.max(0.7, room.d / 2 - 1);
-        const latCap = Math.abs(px2) * hw + Math.abs(py2) * hd;
-        const h12 = (a2.id * 2654435761 >>> 0) / 4294967296;
-        const off = (h12 - 0.5) * Math.min(0.9 * Math.max(1, nShoot), Math.max(0, 2 * latCap - 0.4));
-        return [hx + px2 * off, hy + py2 * off, fx, fy];
-      }
-      _firingDrift(a2, dt) {
-        const room = this.graph.node(a2.pnode ?? a2.node);
-        const slot = this._firingSlot(a2, room);
-        if (!slot) {
-          a2.followSpeed = 0;
-          a2.animTime += dt;
-          return;
-        }
-        const dx = slot[0] - a2.x, dy = slot[1] - a2.y;
-        const d2 = Math.hypot(dx, dy);
-        if (d2 > 1e-6) {
-          const cap = (a2.givingGround ? this.P.morale.backpedalMps : 4.2) * dt;
-          const step3 = Math.min(d2 * Math.min(1, dt * 2.2), cap);
-          a2.x += dx / d2 * step3;
-          a2.y += dy / d2 * step3;
-          a2.followSpeed = step3 / dt;
-        } else a2.followSpeed = 0;
-        this._clampToRoom(a2, room);
-        a2.heading = Math.atan2(slot[3], slot[2]);
-        a2.animTime += this._gaitDt(a2, dt, a2.followSpeed);
       }
       // FIRE IS REAL (user rule): standing in a fire hurts — humans and flood
       // alike, the player included. Flame damage counts as fire for the flood

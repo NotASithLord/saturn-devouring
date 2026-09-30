@@ -386,8 +386,18 @@ export class Sim {
       return false;
     }
     const dx = x2 - x1, dy = y2 - y1;
+    const edgeSlackT = 1.7 / (Math.hypot(dx, dy) || 1);
     let cur = r1, prevT = 1e-9;
     for (let hop = 0; hop < 8; hop++) {
+      // A ray must leave the current room through its next wall. Previously
+      // the walk could skip that wall and accept a later, aligned doorway,
+      // letting a rifle shoot through an intervening bulkhead.
+      const room = g.node(cur);
+      let exitT = Infinity;
+      if (dx > 1e-9) exitT = Math.min(exitT, (room.x + room.w / 2 - x1) / dx);
+      else if (dx < -1e-9) exitT = Math.min(exitT, (room.x - room.w / 2 - x1) / dx);
+      if (dy > 1e-9) exitT = Math.min(exitT, (room.y + room.d / 2 - y1) / dy);
+      else if (dy < -1e-9) exitT = Math.min(exitT, (room.y - room.d / 2 - y1) / dy);
       let bestTo = -1, bestT = Infinity;
       for (const { to, link } of g.adj.std[cur]) {
         const o = link.losOpen;
@@ -404,6 +414,9 @@ export class Sim {
           cross = x1 + dx * t;
         }
         if (t <= prevT || t > 1 + 1e-9) continue;
+        // Adjacent room footprints overlap slightly around some panels; the
+        // doorway may sit up to ~1.6 m inside the room's nominal edge.
+        if (t > exitT + edgeSlackT) continue;
         if (Math.abs(cross - o.c) > 0.85) continue;
         if (t < bestT) { bestT = t; bestTo = to; }
       }
@@ -1752,8 +1765,7 @@ export class Sim {
   // Individual movement branches used their intended path bearing instead;
   // at cross-deck hatches that could be nearly perpendicular to the real
   // walk, producing a forward gait sliding sideways across the floor.
-  // ATTACK is deliberately excluded: a shooter keeps facing the target while
-  // giving ground or shifting along a firing line.
+  // ATTACK is deliberately excluded: a shooter keeps facing the target.
   _faceWalkingHumans() {
     for (const a of this.agents) {
       if (a.dead || a.isPlayer || a.move?.hidden || (a.faction !== FACTION.CIVILIAN
@@ -1843,9 +1855,6 @@ export class Sim {
           // parking slot at the room's center mid-fight is exactly the "it
           // all happens at the center" artifact this round removes
           if (a.state === STATE.COWER) this._parkDrift(a, dt);
-          // marines/armed in a firefight fan out onto a line facing the room's
-          // Flood instead of clumping at the doorway they came in through
-          else if (a.state === STATE.FIGHT && (a.faction === FACTION.MARINE || a.faction === FACTION.ARMED)) this._firingDrift(a, dt);
           else { a.followSpeed = 0; a.animTime += dt; } // holding still — never stuck mid-stride
           continue;
         }
@@ -2308,7 +2317,7 @@ export class Sim {
             ? a.retreatSprint : undefined,
           dartSprint: a.faction === FACTION.COMBAT && a.task?.kind === TASK.DART
             && a.task.stage === 1 };
-        a.firePost = null; // a moving shooter re-takes its firing post on arrival
+        a.heldCombatGround = false;
         // DUCT NOISES (user: vents don't show on the map — the crew only
         // HEARS them): a form slipping into the ducting drops an ominous
         // log line, throttled per duct so it stays sparse.
@@ -2440,7 +2449,10 @@ export class Sim {
         if (queues) link.occupiedBy = a.id; // claim the ladder (pods never do)
         if (a.state === STATE.IDLE) a.state = STATE.MOVE;
       } else {
-        this._parkDrift(a, dt);
+        // Marines keep the ground they held in a firefight. Recomputing a
+        // parking slot after contact made them drift back across the room.
+        if (a.faction === FACTION.MARINE && a.heldCombatGround) { a.followSpeed = 0; a.animTime += dt; }
+        else this._parkDrift(a, dt);
       }
     }
   }
@@ -3314,85 +3326,6 @@ export class Sim {
     return b.pnode ?? b.node;
   }
 
-  // FIRING LINE (user note: marines clump in the doorway when a room goes hot —
-  // spread out for wider lines of fire). A marine/armed in FIGHT holds a line
-  // facing the visible Flood. Two stable per-id hashes place each shooter: one
-  // LATERAL (across the line) and one in DEPTH (staggered ranks back from the
-  // front). why: in a long thin artery the line runs athwartships across only
-  // ~4 m, so lateral spread alone just re-made the clump at the junction (user
-  // report: every game they pile at Main Corridor Fore). Staggering the squad
-  // in depth down the corridor's long axis reads as a defensive LANE held back
-  // from the threat, not a knot at the doorway. Both offsets are clamped to the
-  // room's real reach along each axis; _separate resolves hash collisions.
-  // Returns [x, y, fx, fy] (slot + unit facing toward the threat) or null when
-  // there is no Flood in line of sight.
-  _firingSlot(a, room) {
-    const occ = this._occ[a.pnode ?? a.node];
-    if (!occ) return null;
-    let nShoot = 0;
-    for (const o of occ) {
-      const f = o.faction;
-      if (f === FACTION.MARINE || f === FACTION.ARMED) nShoot++;
-    }
-    const threats = this.lineOfSightAgents(a, (o) => !o.downed
-      && (o.faction === FACTION.COMBAT || o.faction === FACTION.CARRIER || o.faction === FACTION.INFECTION));
-    if (!threats.length) return null;
-    let tx = 0, ty = 0;
-    for (const threat of threats) { tx += threat.x; ty += threat.y; }
-    tx /= threats.length;
-    ty /= threats.length;
-    // HOLD YOUR GROUND (user: marines fly to the CENTRE of the room when they
-    // engage). The stance is anchored on the marine's OWN post — where it took
-    // up the fight (its arrival slot) — NOT a room- or swarm-relative point that
-    // dragged the whole squad into the middle. It FACES the swarm, fans a little
-    // laterally off its post, and only GIVES GROUND (steps the post back) if the
-    // swarm closes to knife range. A rifleman holds and shoots; it doesn't
-    // sprint at the flood, and it doesn't wander to the room centre.
-    if (!a.firePost) a.firePost = [a.x, a.y];
-    let hx = a.firePost[0], hy = a.firePost[1];
-    const dx = tx - hx, dy = ty - hy;
-    const td = Math.hypot(dx, dy) || 1;
-    const fx = dx / td, fy = dy / td;                        // post -> swarm (facing)
-    // a shooter GIVING GROUND keeps a much wider standoff, so the post walks
-    // backwards ahead of the swarm while it keeps firing (user: fire while
-    // falling back). A holding shooter only gives ground at knife range.
-    const MIN = a.givingGround
-      ? this.P.morale.giveGroundM
-      : this.P.combat.meleeRangeM + 1.5;                     // ~3.7 m
-    if (td < MIN) { hx -= fx * (MIN - td); hy -= fy * (MIN - td); a.firePost[0] = hx; a.firePost[1] = hy; }
-    const px = -fy, py = fx;                                 // firing line runs across this
-    const hw = Math.max(0.7, room.w / 2 - 1.0), hd = Math.max(0.7, room.d / 2 - 1.0);
-    const latCap = Math.abs(px) * hw + Math.abs(py) * hd;    // room reach across the line
-    const h1 = ((a.id * 2654435761) >>> 0) / 4294967296;     // stable per-id lateral slot
-    // fan across (~0.9 m/shooter), never past the walls — longitudinal spread
-    // already comes from each marine's own arrival slot (_parkSlot), so a
-    // corridor line stays a lane without an explicit depth term
-    const off = (h1 - 0.5) * Math.min(0.9 * Math.max(1, nShoot), Math.max(0, 2 * latCap - 0.4));
-    return [hx + px * off, hy + py * off, fx, fy];
-  }
-
-  _firingDrift(a, dt) {
-    const room = this.graph.node(a.pnode ?? a.node);
-    const slot = this._firingSlot(a, room);
-    if (!slot) { a.followSpeed = 0; a.animTime += dt; return; }
-    // same human-speed cap as _parkDrift (user: shooters "flying" to their
-    // stance across big rooms) — a combat shuffle, quick but legged
-    const dx = slot[0] - a.x, dy = slot[1] - a.y;
-    const d = Math.hypot(dx, dy);
-    if (d > 1e-6) {
-      // backing away is a walk, not a sprint — you cannot run backwards and
-      // aim (a holding shooter still shuffles to its stance at combat speed)
-      const cap = (a.givingGround ? this.P.morale.backpedalMps : 4.2) * dt;
-      const step = Math.min(d * Math.min(1, dt * 2.2), cap);
-      a.x += (dx / d) * step;
-      a.y += (dy / d) * step;
-      a.followSpeed = step / dt;
-    } else a.followSpeed = 0;
-    this._clampToRoom(a, room);
-    a.heading = Math.atan2(slot[3], slot[2]); // face the threat
-    a.animTime += this._gaitDt(a, dt, a.followSpeed);
-  }
-
   // FIRE IS REAL (user rule): standing in a fire hurts — humans and flood
   // alike, the player included. Flame damage counts as fire for the flood
   // economy (burned husks don't convert).
@@ -3697,7 +3630,7 @@ export class Sim {
     if (a.move) return this._speedMult(a) > 1.2 ? CLIP.RUN : CLIP.WALK;
     // EVERY legged slide picks its cycle from real speed (user: humans
     // floating around with no walking animation). closeFollow escorts,
-    // park/firing drift, and the pinned-host circle all move in real space
+    // park drift and the pinned-host circle both move in real space
     // with NO a.move — each writes followSpeed, and each zeroes it when it
     // settles, so a standing body cannot get stuck mid-stride.
     const fs = a.followSpeed ?? 0;

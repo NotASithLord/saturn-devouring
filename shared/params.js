@@ -417,11 +417,6 @@ export const PARAMS = {
       grazeChance: 0.08,     // per missed shot with a friendly in the graze band
       blockedHitChance: 0.1, // firing anyway THROUGH a man in the lane
       dmgMult: 0.65,         // a graze, not a center-mass kill shot
-      sideStepMps: 1.7,      // deliberate reposition speed toward a clear lane
-      postShiftM: 0.55,      // how far the FIRING POST slides per blocked tick
-                             // (the body nudge alone gets dragged back by the
-                             // steering layer, which pinned marines forever)
-      flipSec: 1.4,          // side still blocked after this long -> try the other
       holdMaxSec: 1.6,       // a marine who still has no lane after this fires
                              // anyway — discipline loses to the thing charging
                              // him, and suppression stays bounded

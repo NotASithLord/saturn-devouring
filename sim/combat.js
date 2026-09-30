@@ -53,6 +53,9 @@ export function combatMeleeImpulse(attacker, target, swing) {
 
 export function resolveCombat(sim, dt) {
   const P = sim.P;
+  const bearingTo = (shooter, target) => Math.atan2(
+    target.y - sim._bandC(target.deck) + sim._bandC(shooter.deck) - shooter.y,
+    target.x - shooter.x);
 
   // --- group agents by PHYSICAL location (user note: real space logic) ---
   // A body is in the room its coordinates are in (a.pnode), the moment it's
@@ -187,6 +190,7 @@ export function resolveCombat(sim, dt) {
         anyFire = true;
         flamer.fuel = Math.max(0, flamer.fuel - P.flamethrower.fuelPerSec * dt);
         const aim = targets[0];
+        flamer.heading = bearingTo(flamer, aim);
         const aimNode = aim.pnode ?? aim.node;
         sim.igniteFlame(aimNode, aim.x, aim.y, `marine:${flamer.id}`, 1.0);
         flamer.flameAimX = aim.x; flamer.flameAimY = aim.y;
@@ -208,8 +212,7 @@ export function resolveCombat(sim, dt) {
       // so lockstep multiplayer holds. Every Flood body is ranked by its real
     // distance from this shooter; target type never overrides proximity.
       // FRIENDLY FIRE (user): rifles are dangerous to everyone downrange —
-      // a squadmate in the tight lane corridor blocks the shot (the shooter
-      // holds and works a side-step for a clear line instead), and a MISS
+      // a squadmate in the tight lane corridor blocks the shot, and a MISS
       // with a squadmate hugging the lane can clip him. The player counts:
       // marines check their lane around you, and a stray round still bites.
       const FF = P.combat.ff;
@@ -221,7 +224,7 @@ export function resolveCombat(sim, dt) {
         const candidates = sim.lineOfSightAgents(s, (t) =>
           (t.faction === FACTION.COMBAT && !t.downed)
           || t.faction === FACTION.INFECTION || t.faction === FACTION.CARRIER)
-          .map((target) => ({ target, range: Math.hypot(target.x - s.x, target.y - s.y) }));
+          .map((target) => ({ target, range: sim.agentDistance(s, target) }));
         const selected = selectRifleTarget(s.fireTargetId, candidates);
         const best = selected?.target ?? null;
         const bestRange = selected?.range ?? 0;
@@ -234,7 +237,7 @@ export function resolveCombat(sim, dt) {
         // hear, turn, and re-acquire. During a sustained fight there's no
         // re-roll, so suppression stays continuous.
         if (sim.t - (s._sawThreatT ?? -99) > P.combat.reactLullSec) {
-          const bearing = Math.atan2(best.y - s.y, best.x - s.x);
+          const bearing = bearingTo(s, best);
           let off = Math.abs(bearing - (s.heading ?? 0));
           if (off > Math.PI) off = 2 * Math.PI - off;
           const behind = off > P.combat.reactConeRad;
@@ -243,11 +246,15 @@ export function resolveCombat(sim, dt) {
             + (behind ? P.combat.reactBehindSec * (0.6 + 0.8 * (off / Math.PI)) : 0);
         }
         s._sawThreatT = sim.t;
+        // Face the acquired target, including during the reaction delay. A
+        // room-average aim can point away from the form actually being shot.
+        s.heading = bearingTo(s, best);
         if (sim.t < (s._reactUntil ?? 0)) continue; // still turning / registering it
         // check the lane before the trigger: anyone friendly BETWEEN muzzle
         // and target, inside the corridor, blocks the shot outright; anyone
         // in the wider graze band becomes the victim a miss can find
-        const ldx = best.x - s.x, ldy = best.y - s.y;
+        const ldx = best.x - s.x;
+        const ldy = best.y - sim._bandC(best.deck) + sim._bandC(s.deck) - s.y;
         const laneL = Math.hypot(ldx, ldy) || 1e-6;
         const lux = ldx / laneL, luy = ldy / laneL;
         let laneBlocked = false, blocker = null, graze = null, grazeD = Infinity;
@@ -261,29 +268,8 @@ export function resolveCombat(sim, dt) {
           if (perp < FF.grazeHalfM && perp < grazeD) { grazeD = perp; graze = h; }
         }
         if (laneBlocked) {
-          // WORK THE ANGLE. The side-step has to move the marine's POST, not
-          // just its body: resolveCombat runs at the END of the tick, so a
-          // raw position nudge is dragged straight back by _firingDrift on the
-          // next tick and the marine oscillates in place, blocked forever
-          // (measured: 71% of all shot opportunities suppressed). Displacing
-          // firePost makes the steering layer walk him out of the lane at the
-          // normal capped shuffle speed AND hold him there.
-          if (s._ffFlipAt === undefined) s._ffFlipAt = sim.t + FF.flipSec;
-          else if (sim.t >= s._ffFlipAt) {
-            s._ffSide = -(s._ffSide ?? ((s.id & 1) ? 1 : -1));
-            s._ffFlipAt = sim.t + FF.flipSec;
-          }
-          const side = s._ffSide ?? (s._ffSide = (s.id & 1) ? 1 : -1);
-          const room = sim.graph.node(s.pnode ?? s.node);
-          if (s.firePost) {
-            const nx = s.firePost[0] - luy * side * FF.postShiftM;
-            const ny = s.firePost[1] + lux * side * FF.postShiftM;
-            s.firePost[0] = Math.max(room.x - room.w / 2 + 0.8, Math.min(room.x + room.w / 2 - 0.8, nx));
-            s.firePost[1] = Math.max(room.y - room.d / 2 + 0.8, Math.min(room.y + room.d / 2 - 0.8, ny));
-          }
-          s.x += -luy * side * FF.sideStepMps * dt;
-          s.y += lux * side * FF.sideStepMps * dt;
-          sim._clampToRoom(s, room);
+          // Hold fire from this position. Side-stepping the body and its
+          // firing post made marines slide across the room during combat.
           if (sim.t - (sim._ffCallT ?? -999) > FF.callCooldownSec) {
             sim._ffCallT = sim.t;
             sim.log('radio', `check your fire — friendlies in the lane in ${sim.graph.node(node).name}`, node);
@@ -296,7 +282,7 @@ export function resolveCombat(sim, dt) {
           s._ffBlockedSince ??= sim.t;
           if (sim.t - s._ffBlockedSince < FF.holdMaxSec) continue;
           graze = blocker; grazeD = 0; // shooting past a man in the lane
-        } else { s._ffFlipAt = undefined; s._ffBlockedSince = undefined; }
+        } else s._ffBlockedSince = undefined;
         // FIRETEAM AMMO ECONOMY (user): your escorts burn real magazines.
         // A dry marine keeps his boot (stomps below) but the rifle is out
         // until you hand him a mag (G key, sim.giveMag).
@@ -508,6 +494,7 @@ export function resolveCombat(sim, dt) {
         const best = selected?.target ?? null;
         sh.fireTargetId = best?.id;
         if (!best) continue;
+        sh.heading = bearingTo(sh, best);
         if (!stamped) { stamped = true; sim.gunfireAt(gunNode); }
         const gun = sh.faction === FACTION.MARINE ? P.combat.marine.gun : P.combat.armed.gun;
         sh.nextShotAt = sim.t + 1 / gun.rof;

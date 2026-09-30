@@ -54,7 +54,6 @@ export function makeAgent(kind, node, graph) {
     retreatSprint: false, retreatStartedTick: -1, // walk first; run if engaged after
     chargePoseSequence: 0, chargeArmsHigh: false, chargeEndedAt: -Infinity,
     followNode: -1,     // escort: last node re-pathed toward (humans.js)
-    firePost: null,     // [x,y] firing stance a shooter holds in a firefight (sim.js _firingSlot)
 
     // STABLE HIDDEN CLASS (perf pass 4). Every field ANY later code assigns
     // is pre-declared here, so all agents share ONE V8 shape for their whole
@@ -77,13 +76,13 @@ export function makeAgent(kind, node, graph) {
     // fork maps at construction and defeat the whole point.
     dead: false, claimed: false, charging: false, isPlayer: false,
     fromPlayer: false, playerSourceId: -1, afterlifeId: -1, respawnReadyAt: -1,
-    closeFollow: false, followSpeed: 0, taskProgress: 0,
+    closeFollow: false, followSpeed: 0, heldCombatGround: false, taskProgress: 0,
     pnode: node, climbingLink: null,
     // combat & reaction timers (sim.js / combat.js / humans.js)
     nextShotAt: undefined, nextSwingAt: undefined, meleeUntil: undefined,
     fireTargetId: undefined,
     nextHostShotAt: undefined, _sawThreatT: undefined, _reactUntil: undefined,
-    _ffSide: undefined, _ffFlipAt: undefined, _ffBlockedSince: undefined,
+    _ffBlockedSince: undefined,
     firstStruckIn: undefined, lastHurtBy: undefined, lastHurtTick: undefined,
     madeSure: undefined, deathImpulse: undefined,
     // fire & flamer

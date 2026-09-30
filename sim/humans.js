@@ -430,6 +430,7 @@ function updateMarineTick(sim, a, dt) {
     // stand and fight ON CONTACT, where you physically are — a marine does
     // not keep walking to the middle of the hangar with a form on the deck
     a.state = STATE.FIGHT; a.path = []; a.move = null;
+    a.heldCombatGround = true;
     // HOLD OR WITHDRAW (user rule): one or two forms is a firefight a marine
     // wins standing. A real pack is not — he keeps shooting and gives ground,
     // and once they are in his face with room behind him he breaks for the
@@ -437,23 +438,6 @@ function updateMarineTick(sim, a, dt) {
     const visible = visibleFloodForms(sim, a);
     const forms = visible.length;
     a.givingGround = forms > P.morale.marineHoldForms;
-    // A flamethrower is not a rifle: when the nearest visible contact is
-    // outside the fuel stream, advance its stable firing post toward it. The
-    // normal room clamp/door geometry still owns movement, so this is range
-    // awareness rather than a special-case teleport or room transition.
-    if (a.flamer && a.fuel > 0 && visible.length) {
-      let nearest = visible[0], nearestD = Infinity;
-      for (const form of visible) {
-        const d = Math.hypot(form.x - a.x, form.y - a.y);
-        if (d < nearestD) { nearest = form; nearestD = d; }
-      }
-      if (nearestD > P.flamethrower.rangeM * 0.88) {
-        const dx = nearest.x - a.x, dy = nearest.y - a.y;
-        const d = Math.hypot(dx, dy) || 1;
-        const advance = nearestD - P.flamethrower.rangeM * 0.82;
-        a.firePost = [a.x + dx / d * advance, a.y + dy / d * advance];
-      }
-    }
     if (a.givingGround && nearestFloodDist(sim, a) < P.morale.breakContactM) {
       const next = fleeStep(sim, a);
       if (next !== null && next !== -1) {
@@ -588,6 +572,7 @@ function updateMarineTick(sim, a, dt) {
           // the fuel goes onto THAT body, not into the middle of the room —
           // and the trigger is down for the length of the squirt (see FLAMING)
           sim.igniteFlame(a.node, corpse.x, corpse.y, `marine:${a.id}`, 0.85);
+          a.heading = Math.atan2(corpse.y - a.y, corpse.x - a.x);
           a.flameAimX = corpse.x; a.flameAimY = corpse.y; a.flameAimDeck = corpse.deck;
           a.flamingT = sim.t;
           if (sim.stats.corpsesBurned % 10 === 1) sim.log('burn', `flamethrower burning bodies in ${nd.name} (fuel ${a.fuel.toFixed(0)})`, a.node);

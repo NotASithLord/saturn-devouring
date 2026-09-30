@@ -1125,6 +1125,19 @@ assert.equal(squadMarine.state, STATE.FIGHT, 'a visible cross-room form must sta
 const formHp = doorwayForm.hp;
 resolveCombat(doorwaySim, doorwaySim.dt);
 assert.ok(doorwayForm.hp < formHp, 'the marine must fire through the same sightline it detected');
+assert.ok(Math.abs(squadMarine.heading - Math.atan2(doorwayForm.y - squadMarine.y,
+  doorwayForm.x - squadMarine.x)) < 1e-6, 'a firing marine must face the selected target');
+const heldX = squadMarine.x, heldY = squadMarine.y;
+doorwaySim.tickCount = 1; // tick zero matches the default held marker
+for (let tick = 0; tick < 30; tick++) doorwaySim._advanceMovement(doorwaySim.dt);
+assert.ok(Math.hypot(squadMarine.x - heldX, squadMarine.y - heldY) < 1e-6,
+  'a marine must not drift to a new firing line while fighting');
+doorwayForm.dead = true;
+squadMarine.state = STATE.MOVE;
+squadMarine.path = [];
+for (let tick = 0; tick < 30; tick++) doorwaySim._advanceMovement(doorwaySim.dt);
+assert.ok(Math.hypot(squadMarine.x - heldX, squadMarine.y - heldY) < 1e-6,
+  'a marine must not slide back to a parking slot after the fight');
 
 // A shut panel is an absolute combat LOS blocker even when unlocked. The same
 // deterministic opening fraction drives the visible panel, acquisition, and
@@ -1144,6 +1157,7 @@ const nearDoor = (room) => {
 };
 const closedMarine = makeAgent(FACTION.MARINE, closedDoor.a, closedDoorSim.graph);
 const closedForm = makeAgent(FACTION.COMBAT, closedDoor.b, closedDoorSim.graph);
+closedMarine.hp = closedMarine.maxHp = 1000; // keep the sightline fixture alive during point-blank combat
 [closedMarine.x, closedMarine.y] = nearDoor(closedA);
 [closedForm.x, closedForm.y] = nearDoor(closedB);
 closedForm.hp = closedForm.maxHp = 90;
@@ -1177,6 +1191,25 @@ closedDoorSim.P.darkness.darkAccMult = 1;
 closedDoorSim.P.darkness.fogAccMult = 1;
 resolveCombat(closedDoorSim, closedDoorSim.dt);
 assert.ok(closedForm.hp < closedHp, 'the marine may fire once the door is open');
+
+// An open doorway is still a narrow opening in a bulkhead. A form outside
+// its projected span must neither be acquired nor hit through the wall.
+let behindWall = null;
+for (const xf of [-0.42, 0, 0.42]) for (const yf of [-0.42, 0, 0.42]) {
+  const x = closedB.x + xf * closedB.w, y = closedB.y + yf * closedB.d;
+  closedForm.x = x; closedForm.y = y;
+  closedDoorSim._refreshOccupancy();
+  if (closedDoorSim.agentDistance(closedMarine, closedForm) < closedDoorSim.P.combat.sightM
+    && !closedDoorSim.hasLineOfSight(closedMarine, closedForm)) { behindWall = [x, y]; break; }
+}
+assert.ok(behindWall, 'the open-door fixture needs a position hidden by the bulkhead');
+[closedForm.x, closedForm.y] = behindWall;
+closedDoorSim._refreshOccupancy();
+closedMarine.nextShotAt = 0;
+const wallHp = closedForm.hp;
+resolveCombat(closedDoorSim, closedDoorSim.dt);
+assert.equal(closedMarine.fireTargetId, undefined, 'a marine must not acquire through a bulkhead');
+assert.equal(closedForm.hp, wallHp, 'an open door must not allow shots through adjacent steel');
 
 closedMarine.dead = true;
 closedForm.dead = true;
