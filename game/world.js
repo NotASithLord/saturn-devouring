@@ -576,18 +576,27 @@ export class World {
       }
       return m;
     };
-    const scaleFloorUV = (geo, w, d) => {
-      const su = Math.max(1, w / 4), sv = Math.max(1, d / 4);
-      const uv = geo.attributes.uv;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+    // The deck image is a 3:1 plate. Mapping it to a 4x4 square made its
+    // distinctive rim and grime recur in a tight checkerboard. Keep its
+    // proportions and anchor the pattern in ship space: slabs split around
+    // hatches then meet without restarting the plate at every cut.
+    const scaleFloorUV = (geo, w, d, cx = 0, cz = 0) => {
+      const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
+      for (let i = 0; i < uv.count; i++) {
+        if (Math.abs(n.getY(i)) > 0.5) {
+          uv.setXY(i, (p.getX(i) + cx) / 12, (p.getZ(i) + cz) / 4);
+        } else {
+          uv.setXY(i, uv.getX(i) * w / 12, uv.getY(i) * d / 4);
+        }
+      }
       return geo;
     };
     this._scaleFloorUV = scaleFloorUV;
-    const scaleWallUV = (geo) => {
+    const scaleWallUV = (geo, horiz, center, centerY, deckY, phase) => {
       const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
       for (let i = 0; i < uv.count; i++) {
-        const horizontal = Math.abs(n.getX(i)) > 0.5 ? p.getZ(i) : p.getX(i);
-        uv.setXY(i, horizontal / 2.0, p.getY(i) / 3.0);
+        const along = horiz ? p.getX(i) : p.getZ(i);
+        uv.setXY(i, (along + center) / 4 + phase, (p.getY(i) + centerY - deckY) / 3);
       }
       return geo;
     };
@@ -677,7 +686,7 @@ export class World {
       // floor + ceiling with hatch holes where shafts pierce them
       const fh = floorHoles.get(n.idx) ?? [];
       if (!isStair) for (const [a0, b0, a1, b1] of rectMinusHoles(wx - n.w / 2, wz - n.d / 2, wx + n.w / 2, wz + n.d / 2, fh)) {
-        const slab = new THREE.Mesh(scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0), fmat);
+        const slab = new THREE.Mesh(scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2), fmat);
         slab.position.set((a0 + a1) / 2, elev - 0.06, (b0 + b1) / 2);
         this.scene.add(slab);
       }
@@ -782,6 +791,9 @@ export class World {
         { key: 'E', horiz: false, fixed: wx + n.w / 2 - wi, from: wz - n.d / 2, to: wz + n.d / 2 },
       ];
       for (const run of wallRuns) {
+        // Opposing walls use different parts of the plate, while every piece
+        // of one wall shares ship-space UVs across door and window openings.
+        const wallPhase = (n.idx * 7 + 'NSWE'.indexOf(run.key) * 11) % 4 / 4;
         const cuts = sides[run.key]
           .map((c) => ({ ...c, at: Math.max(run.from + DOOR_W / 2 + 0.2, Math.min(run.to - DOOR_W / 2 - 0.2, c.at)) }))
           .sort((a, b) => a.at - b.at);
@@ -802,7 +814,7 @@ export class World {
           for (const c of cuts) {
             const hh = roomH - CLEAR_H;
             const header = new THREE.Mesh(
-              scaleWallUV(run.horiz ? new THREE.BoxGeometry(DOOR_W, hh, WALL_T) : new THREE.BoxGeometry(WALL_T, hh, DOOR_W)),
+              scaleWallUV(run.horiz ? new THREE.BoxGeometry(DOOR_W, hh, WALL_T) : new THREE.BoxGeometry(WALL_T, hh, DOOR_W), run.horiz, c.at, elev + CLEAR_H + hh / 2, elev, wallPhase),
               matWall);
             if (run.horiz) header.position.set(c.at, elev + CLEAR_H + hh / 2, run.fixed);
             else header.position.set(run.fixed, elev + CLEAR_H + hh / 2, c.at);
@@ -813,7 +825,7 @@ export class World {
         const addWallBox = (a, b, y, height) => {
           const len = b - a;
           const wall = new THREE.Mesh(
-            scaleWallUV(run.horiz ? new THREE.BoxGeometry(len, height, WALL_T) : new THREE.BoxGeometry(WALL_T, height, len)),
+            scaleWallUV(run.horiz ? new THREE.BoxGeometry(len, height, WALL_T) : new THREE.BoxGeometry(WALL_T, height, len), run.horiz, (a + b) / 2, y, elev, wallPhase),
             matWall);
           if (run.horiz) wall.position.set((a + b) / 2, y, run.fixed);
           else wall.position.set(run.fixed, y, (a + b) / 2);
@@ -1236,7 +1248,7 @@ export class World {
     // entry floor at deck level, with the well cut out (walk all the way round)
     const hole = { x: wellCx, z: wellCz, hw: wellHx, hd: wellHz };
     for (const [a0, b0, a1, b1] of rectMinusHoles(cx - hx, cz - hz, cx + hx, cz + hz, [hole])) {
-      const slab = new THREE.Mesh(this._scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.14, b1 - b0), a1 - a0, b1 - b0), fmat);
+      const slab = new THREE.Mesh(this._scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.14, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2), fmat);
       slab.position.set((a0 + a1) / 2, hiElev - 0.07, (b0 + b1) / 2);
       this.scene.add(slab);
     }
@@ -1250,7 +1262,7 @@ export class World {
         const zc = frontToBack ? (wellCz - wellHz) + (i + 0.5) * dz : (wellCz + wellHz - landD) - (i + 0.5) * dz;
         const yc = yStart - (i + 0.5) * dy;
         const tread = new THREE.Mesh(
-          this._scaleFloorUV(new THREE.BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03), matStep);
+          this._scaleFloorUV(new THREE.BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03, (xLo + xHi) / 2, zc), matStep);
         tread.position.set((xLo + xHi) / 2, yc, zc);
         this.scene.add(tread);
       }
@@ -1260,7 +1272,7 @@ export class World {
     // mid landing (at the back, both halves) — the full landD band, so the
     // 180° turn happens on real flat floor, matching switchbackElev
     const land = new THREE.Mesh(
-      this._scaleFloorUV(new THREE.BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD), matStep);
+      this._scaleFloorUV(new THREE.BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD, wellCx, wellCz + wellHz - landD / 2), matStep);
     land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - landD / 2);
     this.scene.add(land);
     // switchback spine wall between the two flights, with a bright cap rail —
