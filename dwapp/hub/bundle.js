@@ -80604,10 +80604,29 @@ var init_world = __esm({
               pane.position.set(x2, ny + 0.01, z2);
               this.scene.add(pane);
             }
-            const runN = Math.floor((highElev - lowElev) / 0.38);
+            const LADDER_W = 0.7, RAIL = 0.11, WALL_GAP = 0.22;
+            const ladderZ = z2 - HATCH / 2 + WALL_GAP;
+            const railX = LADDER_W / 2 + RAIL / 2;
+            const railBottom = lowElev + 0.02, railTop = highElev + 0.72;
+            const railGeo = new BoxGeometry(RAIL, railTop - railBottom, RAIL);
+            const bracketDepth = WALL_GAP + RIM / 2;
+            const bracketZ = z2 - HATCH / 2 + (WALL_GAP - RIM / 2) / 2;
+            const bracketGeo = new BoxGeometry(RAIL, 0.16, bracketDepth);
+            for (const side of [-1, 1]) {
+              const sx = x2 + side * railX;
+              const upright = new Mesh(railGeo, matLadder);
+              upright.position.set(sx, (railBottom + railTop) / 2, ladderZ);
+              this.scene.add(upright);
+              for (const elev of [lowElev, highElev]) {
+                const bracket = new Mesh(bracketGeo, matLadder);
+                bracket.position.set(sx, elev + 0.08, bracketZ);
+                this.scene.add(bracket);
+              }
+            }
+            const runN = Math.floor((highElev - lowElev - 0.5) / 0.38);
             for (let i2 = 0; i2 <= runN; i2++) {
-              const rung2 = new Mesh(new BoxGeometry(0.7, 0.05, 0.07), matLadder);
-              rung2.position.set(x2, lowElev + 0.3 + i2 * 0.38, z2 - HATCH / 2 + 0.1);
+              const rung2 = new Mesh(new BoxGeometry(LADDER_W, 0.05, 0.07), matLadder);
+              rung2.position.set(x2, lowElev + 0.3 + i2 * 0.38, ladderZ);
               this.scene.add(rung2);
             }
             const linH = highElev - lowElev - CLEAR_H;

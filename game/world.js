@@ -1028,10 +1028,33 @@ export class World {
           pane.position.set(x, ny + 0.01, z);
           this.scene.add(pane);
         }
-        const runN = Math.floor((highElev - lowElev) / 0.38);
+        // The old rungs were separate bars suspended in the well. Run two
+        // continuous side rails from the lower floor through the upper hatch,
+        // then tie their feet into the hatch frames. The handholds extend
+        // above the upper deck so the ladder has a visible exit there too.
+        const LADDER_W = 0.7, RAIL = 0.11, WALL_GAP = 0.22;
+        const ladderZ = z - HATCH / 2 + WALL_GAP;
+        const railX = LADDER_W / 2 + RAIL / 2;
+        const railBottom = lowElev + 0.02, railTop = highElev + 0.72;
+        const railGeo = new THREE.BoxGeometry(RAIL, railTop - railBottom, RAIL);
+        const bracketDepth = WALL_GAP + RIM / 2;
+        const bracketZ = z - HATCH / 2 + (WALL_GAP - RIM / 2) / 2;
+        const bracketGeo = new THREE.BoxGeometry(RAIL, 0.16, bracketDepth);
+        for (const side of [-1, 1]) {
+          const sx = x + side * railX;
+          const upright = new THREE.Mesh(railGeo, matLadder);
+          upright.position.set(sx, (railBottom + railTop) / 2, ladderZ);
+          this.scene.add(upright);
+          for (const elev of [lowElev, highElev]) {
+            const bracket = new THREE.Mesh(bracketGeo, matLadder);
+            bracket.position.set(sx, elev + 0.08, bracketZ);
+            this.scene.add(bracket);
+          }
+        }
+        const runN = Math.floor((highElev - lowElev - 0.5) / 0.38);
         for (let i = 0; i <= runN; i++) {
-          const rung = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.05, 0.07), matLadder);
-          rung.position.set(x, lowElev + 0.3 + i * 0.38, z - HATCH / 2 + 0.1);
+          const rung = new THREE.Mesh(new THREE.BoxGeometry(LADDER_W, 0.05, 0.07), matLadder);
+          rung.position.set(x, lowElev + 0.3 + i * 0.38, ladderZ);
           this.scene.add(rung);
         }
         // shaft lining between decks (four thin walls through the structure)
