@@ -314,4 +314,33 @@ released.dead = true;
 reserveSim._checkOutcome();
 assert.equal(reserveSim.outcome, 'contained', 'a third extinction must remain a real containment');
 
+const weakSim = new Sim('weak-hive-reserve-check');
+const lastPod = weakSim.agents.find((agent) => agent.faction === FACTION.INFECTION);
+for (const agent of weakSim.agents) {
+  if (agent === lastPod) continue;
+  if (agent.faction === FACTION.INFECTION || agent.faction === FACTION.COMBAT
+    || agent.faction === FACTION.CARRIER) agent.dead = true;
+}
+weakSim.t = 100;
+weakSim._checkOutcome();
+weakSim.t += weakSim.P.flood.weakHiveReserveDelaySec - 1;
+weakSim._checkOutcome();
+assert.equal(weakSim.dormantVentReserves, 2,
+  'a brief weak opening must not spend the hidden reserve');
+weakSim.t += 1;
+weakSim._checkOutcome();
+assert.equal(weakSim.dormantVentReserves, 1,
+  'sustained near-extinction must wake one finite reserve');
+assert.equal(weakSim.outcome, null, 'the weak hive remains a live outbreak');
+weakSim.t += 1;
+weakSim._checkOutcome();
+assert.equal(weakSim.dormantVentReserves, 1,
+  'the weak-hive timer must prevent back-to-back reserve releases');
+const growingForm = makeAgent(FACTION.COMBAT, lastPod.node, weakSim.graph);
+weakSim.spawn(growingForm);
+weakSim.t += weakSim.P.flood.weakHiveReserveDelaySec;
+weakSim._checkOutcome();
+assert.equal(weakSim.dormantVentReserves, 1,
+  'a recovered production path must stop spending reserves');
+
 console.log('infection navigation ✓');

@@ -49,6 +49,7 @@ export const PARAMS = {
     lowerDeckInitialInfectionForms: 10,
     initialInfectionFormsPerAdditionalPlayer: 3,
     dormantVentReserves: 2,   // final extinction wakes at most two isolated pods already hidden in the duct network
+    weakHiveReserveDelaySec: 90, // a near-extinct hive with no producers may wake one before the last pod dies
     initialCombatForms: 0,     // a pure infection swarm; combat forms + carriers
     initialCarriers: 0,        // are EARNED through conversions, not handed out at t=0
   },

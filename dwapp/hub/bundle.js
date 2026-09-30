@@ -69262,6 +69262,8 @@ var init_params = __esm({
         initialInfectionFormsPerAdditionalPlayer: 3,
         dormantVentReserves: 2,
         // final extinction wakes at most two isolated pods already hidden in the duct network
+        weakHiveReserveDelaySec: 90,
+        // a near-extinct hive with no producers may wake one before the last pod dies
         initialCombatForms: 0,
         // a pure infection swarm; combat forms + carriers
         initialCarriers: 0
@@ -75905,6 +75907,7 @@ var init_sim = __esm({
         this.outcomeAt = null;
         this.dormantVentReserves = this.P.flood.dormantVentReserves ?? 0;
         this._dormantVentReleaseNodes = /* @__PURE__ */ new Set();
+        this._weakHiveSince = -1;
         this.stats = {
           conversions: 0,
           conversionsRound: 0,
@@ -78745,9 +78748,19 @@ var init_sim = __esm({
       }
       _checkOutcome() {
         if (this.outcome) return;
-        const anyFlood = this.agents.some((a2) => !a2.dead && (isActiveFloodForm(a2) || a2.faction === FACTION.CARRIER || a2.faction === FACTION.COMBAT && a2.downed && a2.damage < 100 && a2.reviveAt >= 0));
+        let infection = 0, combat = 0, carriers = 0, reviving = 0;
+        for (const a2 of this.agents) {
+          if (a2.dead) continue;
+          if (a2.faction === FACTION.INFECTION && isActiveFloodForm(a2)) infection++;
+          else if (a2.faction === FACTION.COMBAT) {
+            if (isActiveFloodForm(a2)) combat++;
+            else if (a2.downed && a2.damage < 100 && a2.reviveAt >= 0) reviving++;
+          } else if (a2.faction === FACTION.CARRIER) carriers++;
+        }
+        const anyFlood = infection + combat + carriers + reviving > 0;
         const anyHuman = this.agents.some((a2) => !a2.dead && isLivingHuman(a2));
         if (!anyFlood) {
+          this._weakHiveSince = -1;
           if (anyHuman && this._releaseDormantVentReserve()) return;
           this.outcome = "contained";
           this.outcomeAt = this.t;
@@ -78756,6 +78769,14 @@ var init_sim = __esm({
           this.outcome = "lost";
           this.outcomeAt = this.t;
           this.log("end", `SHIP LOST at ${fmtTime(this.t)} — the Flood owns the Saturn Devouring`);
+        } else if (infection > 0 && infection <= 2 && combat === 0 && carriers === 0 && this.dormantVentReserves > 0) {
+          if (this._weakHiveSince < 0) this._weakHiveSince = this.t;
+          if (this.t - this._weakHiveSince >= this.P.flood.weakHiveReserveDelaySec) {
+            this._releaseDormantVentReserve();
+            this._weakHiveSince = this.t;
+          }
+        } else {
+          this._weakHiveSince = -1;
         }
       }
       _releaseDormantVentReserve() {

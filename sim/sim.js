@@ -96,6 +96,7 @@ export class Sim {
     this.outcomeAt = null; // sim seconds at the moment it was decided
     this.dormantVentReserves = this.P.flood.dormantVentReserves ?? 0;
     this._dormantVentReleaseNodes = new Set();
+    this._weakHiveSince = -1;
 
     this.stats = {
       conversions: 0, conversionsRound: 0, humansConverted: 0,
@@ -3501,11 +3502,19 @@ export class Sim {
     // (a body mid-transformation needs no special clause any more: it IS a
     // combat form agent from the instant the pod burrows in — user rule —
     // so isActiveFloodForm counts it like any other)
-    const anyFlood = this.agents.some((a) => !a.dead &&
-      (isActiveFloodForm(a) || a.faction === FACTION.CARRIER ||
-        (a.faction === FACTION.COMBAT && a.downed && a.damage < 100 && a.reviveAt >= 0)));
+    let infection = 0, combat = 0, carriers = 0, reviving = 0;
+    for (const a of this.agents) {
+      if (a.dead) continue;
+      if (a.faction === FACTION.INFECTION && isActiveFloodForm(a)) infection++;
+      else if (a.faction === FACTION.COMBAT) {
+        if (isActiveFloodForm(a)) combat++;
+        else if (a.downed && a.damage < 100 && a.reviveAt >= 0) reviving++;
+      } else if (a.faction === FACTION.CARRIER) carriers++;
+    }
+    const anyFlood = infection + combat + carriers + reviving > 0;
     const anyHuman = this.agents.some((a) => !a.dead && isLivingHuman(a));
     if (!anyFlood) {
+      this._weakHiveSince = -1;
       if (anyHuman && this._releaseDormantVentReserve()) return;
       this.outcome = 'contained';
       this.outcomeAt = this.t; // frozen: the clock keeps running, the result does not
@@ -3514,6 +3523,19 @@ export class Sim {
       this.outcome = 'lost';
       this.outcomeAt = this.t;
       this.log('end', `SHIP LOST at ${fmtTime(this.t)} — the Flood owns the Saturn Devouring`);
+    } else if (infection > 0 && infection <= 2 && combat === 0 && carriers === 0
+      && this.dormantVentReserves > 0) {
+      // A lone pod can keep the outbreak technically alive while its entire
+      // production line is gone. After a sustained collapse, wake one of the
+      // same finite reserves used on extinction instead of leaving the ship
+      // quiet for minutes. A healthy colony never reaches this branch.
+      if (this._weakHiveSince < 0) this._weakHiveSince = this.t;
+      if (this.t - this._weakHiveSince >= this.P.flood.weakHiveReserveDelaySec) {
+        this._releaseDormantVentReserve();
+        this._weakHiveSince = this.t;
+      }
+    } else {
+      this._weakHiveSince = -1;
     }
   }
 
