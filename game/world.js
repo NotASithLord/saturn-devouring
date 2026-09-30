@@ -92,6 +92,52 @@ export function roomLightFixtureLayout(room) {
   });
 }
 
+// A ceiling strip needs solid plating behind its full footprint. The regular
+// spacing can put one straight across a ladder/lift opening (Main Corridor's
+// fore strip did exactly that). Move it to the nearest intact section; in a
+// cramped room shorten it if necessary rather than hanging it in the well.
+export function ceilingFixtureLayout(room, holes, roomX, roomZ) {
+  const edge = 0.12, gap = 0.12, stripHalfWidth = 0.55 / 2;
+  return roomLightFixtureLayout(room).flatMap((slot) => {
+    const alongX = slot.ry === 0;
+    const center = alongX ? roomX : roomZ;
+    const across = alongX ? roomZ + slot.dz : roomX + slot.dx;
+    const desired = center + (alongX ? slot.dx : slot.dz);
+    const span = alongX ? room.w : room.d;
+    for (let length = slot.length; length >= 0.6; length -= 0.2) {
+      const half = length / 2;
+      const min = center - span / 2 + half + edge;
+      const max = center + span / 2 - half - edge;
+      if (min > max) continue;
+      const candidates = [Math.max(min, Math.min(max, desired)), min, max];
+      for (const hole of holes) {
+        const holeAlong = alongX ? hole.x : hole.z;
+        const holeAcross = alongX ? hole.z : hole.x;
+        const hAlong = alongX ? (hole.hw ?? HATCH / 2) : (hole.hd ?? HATCH / 2);
+        const hAcross = alongX ? (hole.hd ?? HATCH / 2) : (hole.hw ?? HATCH / 2);
+        if (Math.abs(across - holeAcross) < stripHalfWidth + hAcross + gap) {
+          candidates.push(holeAlong - hAlong - half - gap, holeAlong + hAlong + half + gap);
+        }
+      }
+      candidates.sort((a, b) => Math.abs(a - desired) - Math.abs(b - desired));
+      for (const position of candidates) {
+        if (position < min || position > max) continue;
+        const blocked = holes.some((hole) => {
+          const holeAlong = alongX ? hole.x : hole.z;
+          const holeAcross = alongX ? hole.z : hole.x;
+          const hAlong = alongX ? (hole.hw ?? HATCH / 2) : (hole.hd ?? HATCH / 2);
+          const hAcross = alongX ? (hole.hd ?? HATCH / 2) : (hole.hw ?? HATCH / 2);
+          return Math.abs(across - holeAcross) < stripHalfWidth + hAcross + gap
+            && Math.abs(position - holeAlong) < half + hAlong + gap - 0.0001;
+        });
+        if (!blocked) return [{ ...slot, dx: alongX ? position - roomX : slot.dx,
+          dz: alongX ? slot.dz : position - roomZ, length }];
+      }
+    }
+    return [];
+  });
+}
+
 function segDist2(px, py, ax, ay, bx, by) {
   const vx = bx - ax, vy = by - ay;
   const L2 = vx * vx + vy * vy;
@@ -718,7 +764,7 @@ export class World {
       {
         const mode = ['steady', 'soft', 'harsh', 'dead'][g.lightMode[n.idx]];
         const fixtureY = elev + roomH - 0.06;
-        const fixtures = roomLightFixtureLayout(n).map((slot) => ({
+        const fixtures = ceilingFixtureLayout(n, ch, wx, wz).map((slot) => ({
           x: wx + slot.dx,
           y: fixtureY,
           z: wz + slot.dz,

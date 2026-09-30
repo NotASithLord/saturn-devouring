@@ -3,6 +3,7 @@ import { Sim } from '../sim/sim.js';
 import { CLEAR_H, elevOf, floorBandOf } from '../shared/geometry.js';
 import {
   World,
+  ceilingFixtureLayout,
   exteriorObservationSpan,
   insideHullPoint,
   observationSideForRoom,
@@ -71,6 +72,27 @@ assert.ok(archerFixtures[0].dx < 0 && archerFixtures[2].dx > 0,
 const smallRoom = graph.nodes.find((room) => Math.max(room.w, room.d) <= 14);
 assert.equal(roomLightFixtureLayout(smallRoom).length, 1,
   'small rooms must retain one centered fixture');
+
+const mainCorridor = graph.node(graph.byId.get('corrM'));
+const deckBand = graph.deckBands[mainCorridor.deck - 1];
+const mainZ = mainCorridor.y - (deckBand.y0 + deckBand.y1) / 2;
+const mainCeilingHoles = graph.edges.flatMap((edge) => {
+  if (!edge.trunkVertical || !edge.padA) return [];
+  const a = graph.node(edge.a), b = graph.node(edge.b);
+  if (a.idx !== mainCorridor.idx && b.idx !== mainCorridor.idx) return [];
+  const lower = a.deck > b.deck ? a : b;
+  if (lower.idx !== mainCorridor.idx) return [];
+  const pad = lower.idx === a.idx ? edge.padA : edge.padB;
+  return [{ x: pad.x, z: pad.y - (deckBand.y0 + deckBand.y1) / 2 }];
+});
+const safeStrips = ceilingFixtureLayout(mainCorridor, mainCeilingHoles, mainCorridor.x, mainZ);
+assert.equal(safeStrips.length, 3, 'Main Corridor should keep all three ceiling strips');
+for (const strip of safeStrips) for (const hole of mainCeilingHoles) {
+  const sx = mainCorridor.x + strip.dx, sz = mainZ + strip.dz;
+  assert.ok(Math.abs(sx - hole.x) >= strip.length / 2 + 0.9 + 0.12
+    || Math.abs(sz - hole.z) >= 0.55 / 2 + 0.9 + 0.12,
+  'no Main Corridor ceiling strip may cross a ladder or lift opening');
+}
 
 const collisionWorld = Object.create(World.prototype);
 collisionWorld.worldToSim = (x, z) => [x, z];

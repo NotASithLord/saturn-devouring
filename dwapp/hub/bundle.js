@@ -79776,6 +79776,50 @@ function roomLightFixtureLayout(room) {
     };
   });
 }
+function ceilingFixtureLayout(room, holes, roomX, roomZ) {
+  const edge = 0.12, gap = 0.12, stripHalfWidth = 0.55 / 2;
+  return roomLightFixtureLayout(room).flatMap((slot) => {
+    const alongX = slot.ry === 0;
+    const center = alongX ? roomX : roomZ;
+    const across = alongX ? roomZ + slot.dz : roomX + slot.dx;
+    const desired = center + (alongX ? slot.dx : slot.dz);
+    const span = alongX ? room.w : room.d;
+    for (let length3 = slot.length; length3 >= 0.6; length3 -= 0.2) {
+      const half = length3 / 2;
+      const min3 = center - span / 2 + half + edge;
+      const max3 = center + span / 2 - half - edge;
+      if (min3 > max3) continue;
+      const candidates = [Math.max(min3, Math.min(max3, desired)), min3, max3];
+      for (const hole of holes) {
+        const holeAlong = alongX ? hole.x : hole.z;
+        const holeAcross = alongX ? hole.z : hole.x;
+        const hAlong = alongX ? hole.hw ?? HATCH / 2 : hole.hd ?? HATCH / 2;
+        const hAcross = alongX ? hole.hd ?? HATCH / 2 : hole.hw ?? HATCH / 2;
+        if (Math.abs(across - holeAcross) < stripHalfWidth + hAcross + gap) {
+          candidates.push(holeAlong - hAlong - half - gap, holeAlong + hAlong + half + gap);
+        }
+      }
+      candidates.sort((a2, b2) => Math.abs(a2 - desired) - Math.abs(b2 - desired));
+      for (const position of candidates) {
+        if (position < min3 || position > max3) continue;
+        const blocked = holes.some((hole) => {
+          const holeAlong = alongX ? hole.x : hole.z;
+          const holeAcross = alongX ? hole.z : hole.x;
+          const hAlong = alongX ? hole.hw ?? HATCH / 2 : hole.hd ?? HATCH / 2;
+          const hAcross = alongX ? hole.hd ?? HATCH / 2 : hole.hw ?? HATCH / 2;
+          return Math.abs(across - holeAcross) < stripHalfWidth + hAcross + gap && Math.abs(position - holeAlong) < half + hAlong + gap - 1e-4;
+        });
+        if (!blocked) return [{
+          ...slot,
+          dx: alongX ? position - roomX : slot.dx,
+          dz: alongX ? slot.dz : position - roomZ,
+          length: length3
+        }];
+      }
+    }
+    return [];
+  });
+}
 function segDist2(px2, py2, ax, ay, bx, by) {
   const vx = bx - ax, vy = by - ay;
   const L2 = vx * vx + vy * vy;
@@ -80380,7 +80424,7 @@ var init_world = __esm({
           {
             const mode = ["steady", "soft", "harsh", "dead"][g2.lightMode[n2.idx]];
             const fixtureY = elev + roomH - 0.06;
-            const fixtures = roomLightFixtureLayout(n2).map((slot) => ({
+            const fixtures = ceilingFixtureLayout(n2, ch, wx, wz).map((slot) => ({
               x: wx + slot.dx,
               y: fixtureY,
               z: wz + slot.dz,
