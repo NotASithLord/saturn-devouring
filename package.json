@@ -38,7 +38,9 @@
     "check:peerd-compat": "node scripts/check-peerd-compat.mjs",
     "build:site": "node scripts/build-site.mjs",
     "deploy:guard": "node scripts/check-deploy.mjs",
-    "deploy": "npm run build:site && npm run deploy:guard && wrangler deploy && wrangler deploy -c wrangler.legacy.jsonc",
+    "deploy": "npm run deploy:staging",
+    "deploy:staging": "npm run build:site && npm run deploy:guard && wrangler deploy -c wrangler.staging.jsonc",
+    "deploy:live": "npm run build:site && npm run deploy:guard && wrangler deploy && wrangler deploy -c wrangler.legacy.jsonc",
     "stairs": "node sim/stair-check.mjs",
     "shadows": "node engine/shadow-budget-check.mjs",
     "audio": "node game/acoustics-check.mjs && node game/guard-alarm-check.mjs"

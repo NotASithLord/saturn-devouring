@@ -7,5 +7,6 @@ docs
 scripts
 source-assets
 wrangler.jsonc
+wrangler.staging.jsonc
 package.json
 package-lock.json

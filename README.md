@@ -24,6 +24,9 @@ Production web hosting must use HTTPS for WebCrypto, WebRTC, and microphone
 access.
 
 The public game is at [saturn-devouring.arieldeschapell.workers.dev/game/](https://saturn-devouring.arieldeschapell.workers.dev/game/).
+The current Marine and ship-texture update is being tested at
+[saturn-devouring-staging.arieldeschapell.workers.dev/game/](https://saturn-devouring-staging.arieldeschapell.workers.dev/game/).
+`npm run deploy` publishes staging; `npm run deploy:live` is the explicit public release command.
 The former `charon.arieldeschapell.workers.dev` address redirects page visits
 while continuing to serve assets and TURN requests for already-open tabs.
 
