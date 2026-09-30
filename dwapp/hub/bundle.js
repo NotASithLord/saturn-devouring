@@ -94677,25 +94677,24 @@ function setStyle(id, prop, v2) {
 function updateStrengthHud(now) {
   if (now - _strengthHudAt < 250) return;
   _strengthHudAt = now;
-  let infectionMass = 0, marinesAlive = 0;
+  let floodAlive = 0, marinesAlive = 0;
   for (const a2 of sim.agents) {
     if (a2.dead || a2.hp <= 0) continue;
-    if (a2.faction === FACTION.INFECTION && !a2.downed) infectionMass++;
-    else if (a2.faction === FACTION.COMBAT && !a2.downed) infectionMass += 2;
-    else if (a2.faction === FACTION.CARRIER) infectionMass += 2;
-    else if (a2.faction === FACTION.MARINE && !a2.isPlayer && !a2.fromPlayer && !a2.deckGuard) marinesAlive++;
+    if ((a2.faction === FACTION.INFECTION || a2.faction === FACTION.COMBAT) && !a2.downed) floodAlive++;
+    else if (a2.faction === FACTION.CARRIER) floodAlive++;
+    else if (a2.faction === FACTION.MARINE && !a2.isPlayer && !a2.fromPlayer) marinesAlive++;
   }
-  const infectionScale = Math.max(1, sim.P.carrier.productionBackpressure);
+  const percent = marinesAlive ? 50 * floodAlive / marinesAlive : floodAlive ? Infinity : 0;
+  const overmatched = percent > 100;
   setStyle(
     "infectionStrengthBar",
     "transform",
-    `scaleX(${Math.min(1, infectionMass / infectionScale).toFixed(3)})`
+    `scaleX(${Math.min(1, percent / 100).toFixed(3)})`
   );
-  setStyle(
-    "shipStrengthBar",
-    "transform",
-    `scaleX(${Math.min(1, marinesAlive / Math.max(1, shipMarines0)).toFixed(3)})`
-  );
+  setText("infectionStrengthValue", Number.isFinite(percent) ? `${Math.round(percent)}%` : "∞");
+  strengthHud.classList.toggle("overmatched", overmatched);
+  strengthMeter.setAttribute("aria-valuenow", String(Math.min(100, Math.round(percent))));
+  strengthMeter.setAttribute("aria-valuetext", `${floodAlive} Flood to ${marinesAlive} marines, ${Number.isFinite(percent) ? `${Math.round(percent)} percent` : "beyond scale"}`);
 }
 function dismissIntro() {
   governor.cancelPrewarm();
@@ -96526,7 +96525,7 @@ async function pulseAgentKey(code3, duration = 120) {
     player.keys.delete(code3);
   }
 }
-var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, guardAlarm, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, shipMarines0, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, frameTiming, agentDelay;
+var canvas, gamepad, inputMode, refreshInputModeCopy, inputPrompt, QP, HD, QTIER, renderer, _fatalShown, _renderFails, _renderStopped, scene, camera, post, lightPool, TEAM_TORCH_HEX, TEAM_TORCH_CD, teamTorches, teamSpotN, hemi, ambient, _fillX, _fillY, _fillZ, _fillI, torch, torchTarget, _torchRifleBase, _torchRifleTip, _torchRifleDirection, torchSpill, gunFill, _torchDir, fixedShadowSize, torchShadows, LAUNCH, seedFromUrl, seed, coopPlayers, PLAYER_SPAWN_ID, sim, guardAlarm, briefing, world, sporeFX, agents, cic, networkPlayers, networkSquads, bodyFor, player, physics, fireteam, gameSync, isSimAuthority, voiceMuted, voiceActive, voiceBlocked, gameVoice, marineMap, mapDeckButtons, mapOpen, audio, audioGate, ensureTrustedAudio, soundBoard, audioLog, floodHud, fire, blood, sparks, jets, motes, _moteM4, _moteV, _moteS, _shadowAt, RUNGS, PIXEL_BUDGET, rung, governor, applyRung, weapon, FLAME, flamer, hasFlamer, heldIsFlamer, SWAP_HINT_MS, swapHintAt, healFlash, medkitMeshes, armorPackMeshes, grenadeDropMeshes, grenadeDropGeo, grenadeDropMat, rifleMesh, viewmodel, flamerMesh, flamerModel, BUTT, muzzleFlash, wallSpark, wallRay, el, _hudCache, _strengthHudAt, strengthHud, strengthMeter, overlay, intro, introHint, introScroll, introGone, afterlifeBody, livingTeammate, ended, KEYBOARD_CONTROLS, CONTROLLER_CONTROLS, VICTORY_RANKS, playerFellAt, lastEvent, _ominousAt, HUMAN_F, spkName, VOICES, say, _firstContacts, _npDir, _npVec, _npRay, _npSticky, _npAt, _npBest, MATE_COLORS, mates, commsRows, _commsAt, _mateVec, canvasW, canvasH, _vpW, _vpH, fireHeld, gamepadFireHeld, reloadPressed, meleePressed, gamepadPaused, gamepadMapNavX, gamepadOverlayNav, fragPressed, frags, _swapAt, _dryNear, _dryNearAt, _dir, _rt, _up, _hit, _shotSolids, bodyRadius, hoverOf, _mdir, _mto, _mray, _fdir, _fto, _fmuzzle, _fend, _flameJet, _flameSeed, _flameAimSolution, liveFrags, fragGeo, fragMat, boomLight, shake, hitFlash, dmgFlash, damageTint, dmgAngle, lastPlayerHurtTick, lastPlayerArmor, lastPlayerHp, fragRay, _fragMove, _fragNormal, _fragVelocity, trk, trkState, chitterAt, gurgleAt, _carrierPos, _gunVoiced, _obstacleR, _obstacleRecs, _doorsOnDeck, _obstacleN, _obstacleKey, BARK_KEYS, barkState, physAcc, _trackerAt, _observeAt, _sweepAt, _lightingAt, _smYaw, _smPitch, _bobPhase, _bobAmp, reloadFlashJank, _fpsEma, _fpsWorst, _fpsShownAt, ticker, shownLost, deathStartedAt, deathFocusAgent, DEATH_REVIEW_MS, deathCamRay, deathFocus, deathDesired, deathDirection, frameTiming, agentDelay;
 var init_main = __esm({
   async "game/main.js?v=1"() {
     init_guard_alarm();
@@ -96725,7 +96724,6 @@ var init_main = __esm({
     }).catch((e2) => console.error("[saturn-devouring] Rapier physics failed to initialise:", e2));
     agents.playerId = player.agent.id;
     fireteam = networkSquads.get(LAUNCH.session?.did) ?? sim.attachPlayerSquad(player.agent, 3);
-    shipMarines0 = sim.agents.filter((a2) => a2.faction === FACTION.MARINE && !a2.isPlayer && !a2.fromPlayer && !a2.deckGuard).length;
     gameSync = createGameSync({
       session: LAUNCH.session,
       scene,
@@ -97232,6 +97230,8 @@ var init_main = __esm({
     el = (id) => document.getElementById(id);
     _hudCache = {};
     _strengthHudAt = -Infinity;
+    strengthHud = el("strengthHud");
+    strengthMeter = strengthHud.querySelector(".strength-track");
     overlay = el("overlay");
     intro = el("intro");
     introHint = el("introHint");

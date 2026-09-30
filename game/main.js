@@ -360,12 +360,6 @@ initRapier().then(() => {
 }).catch((e) => console.error('[saturn-devouring] Rapier physics failed to initialise:', e));
 agents.playerId = player.agent.id;
 const fireteam = networkSquads.get(LAUNCH.session?.did) ?? sim.attachPlayerSquad(player.agent, 3);
-// The ship-strength meter tracks the mobile fighting complement. Deck 1 room
-// sentries are a local alarm network, not a meaningful share of shipwide
-// strength; players and converted player bodies are excluded for the same
-// reason.
-const shipMarines0 = sim.agents.filter((a) => a.faction === FACTION.MARINE
-  && !a.isPlayer && !a.fromPlayer && !a.deckGuard).length;
 const gameSync = createGameSync({
   session: LAUNCH.session,
   scene,
@@ -1436,24 +1430,32 @@ function setStyle(id, prop, v) {
   if (_hudCache[k] !== v) { _hudCache[k] = v; el(id).style[prop] = v; }
 }
 let _strengthHudAt = -Infinity;
+const strengthHud = el('strengthHud');
+const strengthMeter = strengthHud.querySelector('.strength-track');
 function updateStrengthHud(now) {
   if (now - _strengthHudAt < 250) return;
   _strengthHudAt = now;
-  let infectionMass = 0, marinesAlive = 0;
+  let floodAlive = 0, marinesAlive = 0;
   // Read the live entities rather than hive.stats: non-authority co-op peers
   // receive these poses but do not run the hive's strategic tick locally.
   for (const a of sim.agents) {
     if (a.dead || a.hp <= 0) continue;
-    if (a.faction === FACTION.INFECTION && !a.downed) infectionMass++;
-    else if (a.faction === FACTION.COMBAT && !a.downed) infectionMass += 2;
-    else if (a.faction === FACTION.CARRIER) infectionMass += 2;
-    else if (a.faction === FACTION.MARINE && !a.isPlayer && !a.fromPlayer && !a.deckGuard) marinesAlive++;
+    if ((a.faction === FACTION.INFECTION || a.faction === FACTION.COMBAT)
+      && !a.downed) floodAlive++;
+    else if (a.faction === FACTION.CARRIER) floodAlive++;
+    else if (a.faction === FACTION.MARINE && !a.isPlayer && !a.fromPlayer) marinesAlive++;
   }
-  const infectionScale = Math.max(1, sim.P.carrier.productionBackpressure);
+  // One Flood per marine is halfway; two Flood per marine fills the track.
+  // The actual percentage keeps growing, while the end of the bar fractures.
+  const percent = marinesAlive ? 50 * floodAlive / marinesAlive
+    : floodAlive ? Infinity : 0;
+  const overmatched = percent > 100;
   setStyle('infectionStrengthBar', 'transform',
-    `scaleX(${Math.min(1, infectionMass / infectionScale).toFixed(3)})`);
-  setStyle('shipStrengthBar', 'transform',
-    `scaleX(${Math.min(1, marinesAlive / Math.max(1, shipMarines0)).toFixed(3)})`);
+    `scaleX(${Math.min(1, percent / 100).toFixed(3)})`);
+  setText('infectionStrengthValue', Number.isFinite(percent) ? `${Math.round(percent)}%` : '∞');
+  strengthHud.classList.toggle('overmatched', overmatched);
+  strengthMeter.setAttribute('aria-valuenow', String(Math.min(100, Math.round(percent))));
+  strengthMeter.setAttribute('aria-valuetext', `${floodAlive} Flood to ${marinesAlive} marines, ${Number.isFinite(percent) ? `${Math.round(percent)} percent` : 'beyond scale'}`);
 }
 const overlay = el('overlay');
 
