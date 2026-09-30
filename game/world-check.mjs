@@ -99,8 +99,18 @@ collisionWorld.worldToSim = (x, z) => [x, z];
 collisionWorld.isWalkable = (_deck, x) => x >= 0;
 collisionWorld.propBlocked = () => false;
 collisionWorld.doors = [];
+collisionWorld.trunks = [{ vertical: true, x: 4, z: 0, upperDeck: 1, lowerDeck: 2 }];
 assert.equal(collisionWorld.ragdollBlocked(1, 0.25, 0, 0.3), true,
   'a ragdoll radius crossing a bulkhead must collide even when its centre is clear');
 assert.equal(collisionWorld.ragdollBlocked(1, 0.6, 0, 0.3), false);
+for (const deck of [1, 2]) {
+  assert.equal(collisionWorld.ragdollBlocked(deck, 4, 0), true,
+    'ragdoll collision must include both ends of a ladder hatch');
+  const landing = collisionWorld.ragdollLandingPoint(deck, 4, 0);
+  assert.ok(landing && !collisionWorld.ragdollBlocked(deck, ...landing),
+    'a death on the ladder must land on clear deck');
+}
+assert.equal(collisionWorld.ragdollBlocked(3, 4, 0), false,
+  'ladder keep-out must not affect other decks');
 
 console.log('world connectors and observation windows ✓');

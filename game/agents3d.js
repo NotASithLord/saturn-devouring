@@ -2032,7 +2032,11 @@ export class Agents3D {
       // inside it: a thrashing corpse ALWAYS gets a live ragdoll — the
       // convulsions are real impulses, not a canned clip.
       if (this._ragSeen.has(id) && !thrashing && !this._blastAt(wx, wz, deck)) return false;
-      const elev = this.world.groundHeightAt(deck, wx, wz);
+      const landing = this.world.ragdollLandingPoint(deck, wx, wz,
+        this.sim.P.ragdoll.bodyRadius);
+      if (!landing) { this._ragSeen.add(id); return false; }
+      const [landX, landZ] = landing;
+      const elev = this.world.groundHeightAt(deck, landX, landZ);
       const hoverY = rp.hoverY || 0; // a form that died mid-leap starts in the air
       // a thrash-forced flop starts with a SEIZE (a jolt and a limb whip
       // where it lies), not the full death launch that would hurl the body
@@ -2050,7 +2054,7 @@ export class Agents3D {
       // re-resolve every call), re-resolved after >0.5m of lateral travel.
       const cc = [{ x: 1e9, z: 1e9, y: 0 }, { x: 1e9, z: 1e9, y: 0 }];
       rag = sys.spawn(id,
-        { x: wx, y: elev + hoverY, z: wz, heading, deck },
+        { x: landX, y: elev + hoverY, z: landZ, heading, deck },
         impulse,
         (x, z) => this.world.groundHeightAt(deck, x, z),
         (x, z) => {
@@ -2083,6 +2087,9 @@ export class Agents3D {
           };
         });
       if (!rag) return false; // disabled at the system level
+      // The simulation still owns the death location. Relocating only the
+      // cosmetic body off a ladder must not trip the drift guard next frame.
+      rag.originX = wx; rag.originZ = wz;
       this._ragSeen.add(id);
     }
 

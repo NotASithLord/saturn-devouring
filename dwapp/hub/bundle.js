@@ -81661,7 +81661,16 @@ var init_world = __esm({
       // unlocked doorway as passable (it opens for living movers); a corpse has no
       // mover record, so this stricter point test keeps a melee-launched body from
       // ghosting through the visible panels.
+      _ragdollHatchBlocked(deck, wx, wz, radius) {
+        for (const t2 of this.trunks ?? []) {
+          if (!t2.vertical || deck !== t2.upperDeck && deck !== t2.lowerDeck) continue;
+          const keepOut = HATCH / 2 + radius + 1.05;
+          if (Math.abs(wx - t2.x) < keepOut && Math.abs(wz - t2.z) < keepOut) return true;
+        }
+        return false;
+      }
       ragdollBlocked(deck, wx, wz, radius = 0.3) {
+        if (this._ragdollHatchBlocked(deck, wx, wz, radius)) return true;
         for (const [dx, dz] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
           const [sx, sy] = this.worldToSim(wx + dx, wz + dz, deck);
           if (!this.isWalkable(deck, sx, sy) || this.propBlocked(deck, sx, sy)) return true;
@@ -81675,6 +81684,21 @@ var init_world = __esm({
           if (Math.abs(through) <= radius + 0.14 && Math.abs(along) <= closedHalf + radius) return true;
         }
         return false;
+      }
+      // A fatal hit can occur ON a ladder, already inside the keep-out above.
+      // Start the cosmetic corpse on the nearest usable patch of deck so its
+      // swept collision begins outside the hatch rather than trapped inside it.
+      ragdollLandingPoint(deck, wx, wz, radius = 0.3) {
+        if (!this._ragdollHatchBlocked(deck, wx, wz, radius)) return [wx, wz];
+        for (let distance3 = 0.4; distance3 <= 4.01; distance3 += 0.4) {
+          for (let i2 = 0; i2 < 16; i2++) {
+            const angle = i2 * Math.PI / 8;
+            const x2 = wx + Math.cos(angle) * distance3;
+            const z2 = wz + Math.sin(angle) * distance3;
+            if (!this.ragdollBlocked(deck, x2, z2, radius)) return [x2, z2];
+          }
+        }
+        return null;
       }
       // cover props block the player (checked separately so door throats above
       // can still grant passage through walls)
@@ -84502,13 +84526,24 @@ var init_agents3d = __esm({
         } else {
           if (burned) return false;
           if (this._ragSeen.has(id) && !thrashing && !this._blastAt(wx, wz, deck)) return false;
-          const elev = this.world.groundHeightAt(deck, wx, wz);
+          const landing = this.world.ragdollLandingPoint(
+            deck,
+            wx,
+            wz,
+            this.sim.P.ragdoll.bodyRadius
+          );
+          if (!landing) {
+            this._ragSeen.add(id);
+            return false;
+          }
+          const [landX, landZ] = landing;
+          const elev = this.world.groundHeightAt(deck, landX, landZ);
           const hoverY = rp.hoverY || 0;
           const impulse = thrashing ? { dirX: 1, dirZ: 0, speed: 0, up: 0, jitter: 0, jitterUp: 0, spin: 1.4, kick: 9 } : this._deathImpulse(id, f2, flags, wx, wz, deck, heading);
           const cc = [{ x: 1e9, z: 1e9, y: 0 }, { x: 1e9, z: 1e9, y: 0 }];
           rag = sys.spawn(
             id,
-            { x: wx, y: elev + hoverY, z: wz, heading, deck },
+            { x: landX, y: elev + hoverY, z: landZ, heading, deck },
             impulse,
             (x2, z2) => this.world.groundHeightAt(deck, x2, z2),
             (x2, z2) => {
@@ -84542,6 +84577,8 @@ var init_agents3d = __esm({
             }
           );
           if (!rag) return false;
+          rag.originX = wx;
+          rag.originZ = wz;
           this._ragSeen.add(id);
         }
         let finite = Number.isFinite(rag.rootPos[0] + rag.rootPos[1] + rag.rootPos[2] + rag.rootQuat[3]);

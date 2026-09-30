@@ -2105,7 +2105,21 @@ export class World {
   // unlocked doorway as passable (it opens for living movers); a corpse has no
   // mover record, so this stricter point test keeps a melee-launched body from
   // ghosting through the visible panels.
+  _ragdollHatchBlocked(deck, wx, wz, radius) {
+    // The hatch is an actual hole, with rails rising out of it. The generic
+    // room walkability test still calls its footprint open floor, which let a
+    // dying form freeze across the ladder or get lifted by the floor-clearance
+    // pass. Keep the whole rendered body clear of the opening and its frame.
+    for (const t of (this.trunks ?? [])) {
+      if (!t.vertical || (deck !== t.upperDeck && deck !== t.lowerDeck)) continue;
+      const keepOut = HATCH / 2 + radius + 1.05;
+      if (Math.abs(wx - t.x) < keepOut && Math.abs(wz - t.z) < keepOut) return true;
+    }
+    return false;
+  }
+
   ragdollBlocked(deck, wx, wz, radius = 0.3) {
+    if (this._ragdollHatchBlocked(deck, wx, wz, radius)) return true;
     // The old check tested only the centre. A torso or limb could therefore
     // sit partly inside a bulkhead or prop while its centre was still legal.
     for (const [dx, dz] of [[0, 0], [radius, 0], [-radius, 0], [0, radius], [0, -radius]]) {
@@ -2121,6 +2135,22 @@ export class World {
       if (Math.abs(through) <= radius + 0.14 && Math.abs(along) <= closedHalf + radius) return true;
     }
     return false;
+  }
+
+  // A fatal hit can occur ON a ladder, already inside the keep-out above.
+  // Start the cosmetic corpse on the nearest usable patch of deck so its
+  // swept collision begins outside the hatch rather than trapped inside it.
+  ragdollLandingPoint(deck, wx, wz, radius = 0.3) {
+    if (!this._ragdollHatchBlocked(deck, wx, wz, radius)) return [wx, wz];
+    for (let distance = 0.4; distance <= 4.01; distance += 0.4) {
+      for (let i = 0; i < 16; i++) {
+        const angle = i * Math.PI / 8;
+        const x = wx + Math.cos(angle) * distance;
+        const z = wz + Math.sin(angle) * distance;
+        if (!this.ragdollBlocked(deck, x, z, radius)) return [x, z];
+      }
+    }
+    return null;
   }
 
   // cover props block the player (checked separately so door throats above
