@@ -1,13 +1,13 @@
 # Multiplayer protocol
 
-Charon protocol version 9 presents the same core room API inside peerd and on
+Saturn Devouring protocol version 20 presents the same core room API inside peerd and on
 the standalone web page. peerd keeps identity and WebRTC handles in the trusted
 parent; the website bundles the corresponding peerd primitives. Optional
 capacity and voice surfaces are capability-detected rather than assumed.
 
 ## Lobby and deployment
 
-1. Join the live `charon:quickplay:v9` public discovery room or a private room whose
+1. Join the live `charon:quickplay:v20` public discovery room or a private room whose
    address is SHA-256-derived from an invite code. Mesh presence removes stale
    peers; a stable discovery room avoids stranding players on opposite time epochs.
    Private lobby messages require a DID-bound HMAC proof, so an overlay peer
@@ -53,7 +53,7 @@ capacity and voice surfaces are capability-detected rather than assumed.
    removes lobby listeners, and pins voice recipients to the committed roster.
 
 The match room remains a full WebRTC mesh. Electing an authority does not tear
-down peer-to-peer connections and does not turn Charon into a star network.
+down peer-to-peer connections and does not turn Saturn Devouring into a star network.
 
 ## Authority and failover
 
@@ -79,7 +79,7 @@ state and immediately emits a full checkpoint.
 
 ## Game packets
 
-Every direct packet has `{ v, kind, from, name, seq, ...payload }`. Charon
+Every direct packet has `{ v, kind, from, name, seq, ...payload }`. Saturn Devouring
 rejects mismatched authenticated/claimed senders, non-members, replayed
 sequences, malformed arrays, out-of-world values, and excess action rates.
 Continuous values use deterministic 1/1000 fixed-point integers because peerd's
@@ -102,9 +102,9 @@ media and does not travel through application data channels.
 ## Voice
 
 Voice begins only after an explicit user gesture. The current Peerd bridge v0
-does not expose its optional voice operations, so the Charon dwapp hides that
+does not expose its optional voice operations, so the Saturn Devouring dwapp hides that
 control. A future bridge must advertise the complete voice operation set before
-Charon enables it. A sandboxed dwapp never receives a MediaStream, AudioContext,
+Saturn Devouring enables it. A sandboxed dwapp never receives a MediaStream, AudioContext,
 device label, raw RTCStats, or networking handle.
 
 The standalone browser adapter uses dedicated audio-only `RTCPeerConnection`
@@ -129,4 +129,4 @@ media signaling never crosses the trusted bridge into the dwapp.
   outage.
 - Public matchmaking includes strangers. Authentication proves packet origin,
   not benevolence, so all input remains bounded and authority-validated.
-- Charon sends no microphone audio or simulation state to a gameplay server.
+- Saturn Devouring sends no microphone audio or simulation state to a gameplay server.

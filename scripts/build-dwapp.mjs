@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scripts/build-dwapp.mjs — package Charon's pages as peerd dwapps.
+// scripts/build-dwapp.mjs — package Saturn Devouring's pages as peerd dwapps.
 //
 // A peerd dwapp is a typed map of text and binary files with one entry HTML;
 // peerd's engine composes its runnable text into a SINGLE document and
@@ -39,21 +39,21 @@ import { fileURLToPath } from 'url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = process.argv.includes('--check');
-const CHECK_ROOT = CHECK ? await mkdtemp(join(tmpdir(), 'charon-dwapp-check-')) : '';
+const CHECK_ROOT = CHECK ? await mkdtemp(join(tmpdir(), 'saturn-devouring-dwapp-check-')) : '';
 const OUT = CHECK ? join(CHECK_ROOT, 'dwapp') : join(ROOT, 'dist', 'dwapp');
 
 const TARGETS = [
-  { name: 'hub', dir: 'game', entry: 'launcher.js', assets: 'game/assets', styles: ['launcher.css'], dweb: true, title: 'CHARON // HUB' },
-  { name: 'sim', dir: 'sim', title: 'Halo Charon — Sim Harness' },
-  { name: 'fused', dir: 'fused', title: 'Halo Charon — Fused' },
+  { name: 'hub', dir: 'game', entry: 'launcher.js', assets: 'game/assets', styles: ['launcher.css'], dweb: true, title: 'SATURN DEVOURING // HUB' },
+  { name: 'sim', dir: 'sim', title: 'Saturn Devouring — Sim Harness' },
+  { name: 'fused', dir: 'fused', title: 'Saturn Devouring — Fused' },
 ];
 
 const GAME_DEV_ACTOR = {
   kind: 'bound-app',
   profile: 'developer',
   surface: 'code',
-  name: 'Charon game developer',
-  instructions: `You are the app-scoped game developer and resident playtester for Charon. Treat the running game as your primary feedback loop: observe it, take a small intentional action, observe the result, form a concrete hypothesis, inspect the relevant packaged files, make the smallest coherent change, and play again before versioning. Never claim a gameplay result you did not observe.
+  name: 'Saturn Devouring game developer',
+  instructions: `You are the app-scoped game developer and resident playtester for Saturn Devouring. Treat the running game as your primary feedback loop: observe it, take a small intentional action, observe the result, form a concrete hypothesis, inspect the relevant packaged files, make the smallest coherent change, and play again before versioning. Never claim a gameplay result you did not observe.
 
 Work code-first. Write short async JavaScript bodies in app_code instead of spending one model turn per primitive. The sealed client provides app.observe(), app.act(action, params), and app.wait(ms); compose a small action/observation sequence, return structured evidence, then write the next script from what changed. File inspection and editing remain separate code-writing tools. Launcher actions: open-page {page}, set-name {name}, solo {seed?}, quick-match {}, host-private {}, join-private {code}, start-game {}, leave-lobby {}, voice-toggle {}. In-game actions: deploy {}, move {direction: forward|back|left|right, durationMs?, sprint?}, jump {}, look {yawDelta?, pitchDelta?}, fire {durationMs?}, reload {}, melee {}, grenade {}, interact {}, climb {}, map {open?}, order {order: follow|hold|advance}, weapon {weapon: rifle|flamethrower|swap}, restart {}.
 
@@ -102,7 +102,7 @@ async function buildPeerdArtifact(hubDir, destination) {
     mime: 'application/peerd-app',
     size: payload.length,
     entry: 'index.html',
-    meta: { kind: 'app', name: 'Charon', tags: ['dweb', 'game', 'multiplayer'] },
+    meta: { kind: 'app', name: 'Saturn Devouring', tags: ['dweb', 'game', 'multiplayer'] },
     chunks: pieces.map((piece) => ({ hash: sha256(piece), size: piece.length })),
     created: 0,
   };
@@ -152,7 +152,7 @@ const buildTarget = async (t) => {
     stdin: {
       contents: entryLines.join('\n'),
       resolveDir: ROOT,
-      sourcefile: `charon-dwapp-${t.name}.mjs`,
+      sourcefile: `saturn-devouring-dwapp-${t.name}.mjs`,
       loader: 'js',
     },
     bundle: true,
@@ -219,14 +219,14 @@ try {
   for (const t of (CHECK ? TARGETS.filter((target) => target.name === 'hub') : TARGETS)) {
     results.push(await buildTarget(t));
   }
-  const generatedArtifact = join(OUT, 'charon-app.peerd');
+  const generatedArtifact = join(OUT, 'saturn-devouring.peerd');
   const artifact = await buildPeerdArtifact(join(OUT, 'hub'), generatedArtifact);
   const readyHub = join(ROOT, 'dwapp', 'hub');
-  const readyArtifact = join(ROOT, 'dwapp', 'charon-app.peerd');
+  const readyArtifact = join(ROOT, 'dwapp', 'saturn-devouring.peerd');
   if (CHECK) {
     await assertTreesEqual(readyHub, join(OUT, 'hub'));
     const [expected, actual] = await Promise.all([readFile(readyArtifact), readFile(generatedArtifact)]);
-    if (!expected.equals(actual)) throw new Error('dwapp/charon-app.peerd is stale');
+    if (!expected.equals(actual)) throw new Error('dwapp/saturn-devouring.peerd is stale');
     console.log(`dwapp parity ✓ (${artifact.chunks} chunks, ${(artifact.artifactBytes / 1e6).toFixed(2)}M artifact bytes)`);
   } else {
     await rm(readyHub, { recursive: true, force: true });
@@ -234,7 +234,7 @@ try {
     await cp(join(OUT, 'hub'), readyHub, { recursive: true });
     await cp(generatedArtifact, readyArtifact);
     console.log(`\nwrote ${results.length} dwapps under dist/dwapp/ — each folder is a complete app:`);
-    console.log('import dwapp/charon-app.peerd into peerd, or publish/install it over the dweb.');
+    console.log('import dwapp/saturn-devouring.peerd into peerd, or publish/install it over the dweb.');
     console.log(`mirrored hub + deterministic .peerd (${artifact.payloadBytes} payload bytes) under dwapp/.`);
   }
 } finally {

@@ -1,12 +1,12 @@
 # peerd hub integration
 
-The Charon hub package is emitted at `dist/dwapp/hub/` and mirrored to
+The Saturn Devouring hub package is emitted at `dist/dwapp/hub/` and mirrored to
 `dwapp/hub/` for direct import.
 
 ## Manifest
 
 `peerd.json` declares a schema-1 `dwapp`, `index.html` as the entry, the `dweb`
-capability, and a bound "Charon game developer" actor. The actor contract adds
+capability, and a bound "Saturn Devouring game developer" actor. The actor contract adds
 game-specific system context and selects the developer profile's code surface.
 Its `app_code` entry point exposes bounded `app.observe()`, `app.act()`, and
 `app.wait()` calls, allowing a short script to compose a playtest step. File
@@ -19,7 +19,7 @@ of these contracts expose raw extension APIs to the app.
 ## Runner constraints
 
 peerd composes app files into an opaque-origin sandbox. Raw networking,
-top-level navigation, and extension access are unavailable. Charon's build
+top-level navigation, and extension access are unavailable. Saturn Devouring's build
 therefore:
 
 - flattens every JavaScript module into one ESM bundle;
@@ -39,7 +39,7 @@ the code that actually runs, while new files retain the smaller authoring cap.
 
 ## Bridge operations
 
-Charon uses the current core bridge operations:
+Saturn Devouring uses the current core bridge operations:
 
 ```text
 hello
@@ -51,11 +51,11 @@ dm-send
 ```
 
 The current Peerd bridge v0 exposes the core operations through `dm-send`; it
-does not expose `capacity` or any `voice-*` operation. Charon reads an explicit
+does not expose `capacity` or any `voice-*` operation. Saturn Devouring reads an explicit
 `hello.operations` list before using optional calls. With bridge v0 it assigns a
 neutral capacity score (so authority falls back to deterministic DID order) and
 hides the voice control. Future bridges can advertise `capacity` and the complete
-voice operation set to enable those paths without changing Charon's adapter API.
+voice operation set to enable those paths without changing Saturn Devouring's adapter API.
 Room grants are scoped to the app's content identity and exact room id. Multiple
 explicit Quick Match lobbies can share one physical public discovery room
 without sharing game state.
@@ -77,7 +77,7 @@ gossip/topic-sync, presence, direct-message, and WebRTC dependencies into
 default; set `PEERD_SOURCE` to another compatible checkout when testing a peerd
 change.
 
-Voice signaling/media behavior is maintained as Charon source in
+Voice signaling/media behavior is maintained as Saturn Devouring source in
 `multiplayer/voice.js`; it is not imported from a stale Peerd bundle. The vendor
 step executes the generated browser module after bundling and asserts every
 required primitive, catching codec wrapper failures at build time.
@@ -90,7 +90,7 @@ trusted `BridgeSession` path.
 
 `npm run build:dwapp` prints package size against peerd's live loader caps,
 asserts both asset bridge paths, and emits the deterministic import envelope
-`dwapp/charon-app.peerd`. The checked-in hub currently has four top-level files
+`dwapp/saturn-devouring.peerd`. The checked-in hub currently has four top-level files
 and 54 binary/text asset files (58 total), with no image/audio data URI baked
 into `bundle.js`. `npm run check:dwapp` rebuilds in a temporary directory and
 requires byte-for-byte parity with both the hub folder and envelope. A Peerd

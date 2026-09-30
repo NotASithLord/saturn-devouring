@@ -71490,7 +71490,7 @@ function assertDeckConnectivity(graph) {
   const decksSeen = /* @__PURE__ */ new Set();
   for (let i2 = 0; i2 < graph.n; i2++) if (ff.dist[i2] !== -1) decksSeen.add(graph.node(i2).deck);
   if (decksSeen.size < 5) {
-    console.warn(`[charon] deck connectivity broken: only decks {${[...decksSeen].sort().join(",")}} reachable from the bridge — check for a lockable cross-deck edge`);
+    console.warn(`[saturn-devouring] deck connectivity broken: only decks {${[...decksSeen].sort().join(",")}} reachable from the bridge — check for a lockable cross-deck edge`);
   }
 }
 var STATE, NEXT_ID;
@@ -85107,7 +85107,7 @@ var init_player = __esm({
         this._outSince = 0;
         if (!this._outLogged) {
           this._outLogged = true;
-          console.warn("[charon] player was outside the hull — pulled back inside");
+          console.warn("[saturn-devouring] player was outside the hull — pulled back inside");
         }
       }
       _cancelQueue() {
@@ -92461,7 +92461,7 @@ var init_BloomNode = __esm({
        * @param {number} [strength=1] - The strength of the bloom.
        * @param {number} [radius=0] - The radius of the bloom.
        * @param {number} [threshold=0] - The luminance threshold limits which bright areas contribute to the bloom effect.
-       * @param {number} [nMips=5] - Number of blur mips (charon patch: configurable so a 2-mip chain can match a lighter hand-rolled bloom).
+       * @param {number} [nMips=5] - Number of blur mips (saturn-devouring patch: configurable so a 2-mip chain can match a lighter hand-rolled bloom).
        */
       constructor(inputNode, strength = 1, radius = 0, threshold = 0, nMips = 5) {
         super("vec4");
@@ -92626,7 +92626,7 @@ var init_BloomNode = __esm({
        * when the effect is no longer required.
        */
       // (dispose()'s JSDoc block above belongs to dispose(), two methods down.)
-      // charon patch (perf pass 5): release the blur chain's GPU memory WITHOUT
+      // saturn-devouring patch (perf pass 5): release the blur chain's GPU memory WITHOUT
       // touching the compiled materials — dispose() would free the high-pass,
       // composite and blur materials, which is exactly what the quality
       // governor's prewarm pinning spent the intro protecting. Per-target
@@ -94260,12 +94260,12 @@ function setInputMode(mode) {
   refreshInputModeCopy();
 }
 function reportFatal(what, err) {
-  console.error("[charon] " + what, err);
+  console.error("[saturn-devouring] " + what, err);
   if (_fatalShown >= 3) return;
   _fatalShown++;
   const div3 = document.createElement("div");
   div3.style.cssText = "position:fixed;left:10px;top:" + (40 + _fatalShown * 92) + "px;z-index:99;max-width:52em;background:rgba(60,10,10,0.94);color:#ffb0a0;font:11px monospace;padding:6px 8px;border:1px solid #a05040;white-space:pre-wrap;pointer-events:none";
-  div3.textContent = "CHARON " + what.toUpperCase() + ": " + String(err?.message ?? err).slice(0, 400) + "\n" + String(err?.stack ?? "").split("\n").slice(1, 5).join("\n").slice(0, 600);
+  div3.textContent = "SATURN DEVOURING " + what.toUpperCase() + ": " + String(err?.message ?? err).slice(0, 400) + "\n" + String(err?.stack ?? "").split("\n").slice(1, 5).join("\n").slice(0, 600);
   document.body.appendChild(div3);
 }
 function setTeamSpots(n2) {
@@ -94721,7 +94721,7 @@ function victoryScreen() {
     color: rank2.color,
     label: "FINAL TIME",
     secs,
-    share: `I contained the Flood outbreak aboard the UNSC Saturn Devouring in ${fmtTime(secs)} — ${rank2.name}. #HaloCharon`
+    share: `I contained the Flood outbreak aboard the UNSC Saturn Devouring in ${fmtTime(secs)} — ${rank2.name}. #SaturnDevouring`
   });
 }
 function defeatScreen(title, text) {
@@ -94733,7 +94733,7 @@ function defeatScreen(title, text) {
     color: "#ff6a4d",
     label: "YOU SURVIVED",
     secs,
-    share: `The Flood took the UNSC Saturn Devouring — I survived ${fmtTime(secs)}. #HaloCharon`
+    share: `The Flood took the UNSC Saturn Devouring — I survived ${fmtTime(secs)}. #SaturnDevouring`
   });
 }
 function resultCard({ headline, color: color3, label: label3, secs, share }) {
@@ -94777,7 +94777,7 @@ ${url}`);
     location.href = `https://x.com/intent/tweet?text=${encodeURIComponent(share)}&url=${encodeURIComponent(url)}`;
   });
   if (navigator.share) {
-    mkBtn("SHARE…", () => navigator.share({ title: "Halo Charon", text: share, url }).catch(() => {
+    mkBtn("SHARE…", () => navigator.share({ title: "Saturn Devouring", text: share, url }).catch(() => {
     }), true);
   }
   if (player.dead) {
@@ -96568,7 +96568,7 @@ var init_main = __esm({
           div3.style.cssText = "position:fixed;left:10px;top:" + (40 + shown * 64) + "px;z-index:98;max-width:46em;background:rgba(60,10,10,0.92);color:#ffb0a0;font:11px monospace;padding:6px 8px;border:1px solid #a05040;white-space:pre-wrap;pointer-events:none";
           div3.textContent = "WEBGPU ERROR: " + String(e2.error?.message ?? e2.error).slice(0, 500);
           document.body.appendChild(div3);
-          console.error("[charon webgpu]", e2.error);
+          console.error("[saturn-devouring webgpu]", e2.error);
         });
       }
     }
@@ -96651,7 +96651,7 @@ var init_main = __esm({
     seedFromUrl = LAUNCH.seed || new URLSearchParams(location.search).get("seed");
     seed = seedFromUrl || "run-" + Math.random().toString(36).slice(2, 10);
     installDeviceLostReload(renderer, {
-      label: "charon",
+      label: "saturn-devouring",
       storageKey: "charon-gl-lost",
       params: { seed }
     });
@@ -96690,7 +96690,7 @@ var init_main = __esm({
       physics = new PhysicsWorld({ staticBoxes: world.collisionBoxes() });
       physics.setDoorBoxes(world.doorBoxes());
       player.attachPhysics(physics);
-    }).catch((e2) => console.error("[charon] Rapier physics failed to initialise:", e2));
+    }).catch((e2) => console.error("[saturn-devouring] Rapier physics failed to initialise:", e2));
     agents.playerId = player.agent.id;
     fireteam = networkSquads.get(LAUNCH.session?.did) ?? sim.attachPlayerSquad(player.agent, 3);
     shipMarines0 = sim.agents.filter((a2) => a2.faction === FACTION.MARINE && !a2.isPlayer && !a2.fromPlayer && !a2.deckGuard).length;
@@ -96917,7 +96917,7 @@ var init_main = __esm({
       rungs: RUNGS,
       pixelBudget: PIXEL_BUDGET,
       hd: HD,
-      label: "charon",
+      label: "saturn-devouring",
       apply: (R2, i2) => {
         rung = i2;
         torchShadows.setEnabled(R2.shadows);
@@ -97861,7 +97861,7 @@ var init_main = __esm({
   }
 });
 
-// charon-dwapp-hub.mjs
+// saturn-devouring-dwapp-hub.mjs
 init_three_webgpu_module();
 
 // multiplayer/ice-fallback.js
@@ -98778,7 +98778,7 @@ var SessionBase = class {
       try {
         callback(value);
       } catch (error2) {
-        console.error("[charon] session listener failed", event, error2);
+        console.error("[saturn-devouring] session listener failed", event, error2);
       }
     }
   }
@@ -99953,7 +99953,7 @@ function reduceLaunchBarrier(current, event, now = Date.now()) {
 // game/launcher.js
 var byId = (id) => document.getElementById(id);
 var launcher = byId("launcher");
-byId("protocolVersion").textContent = `CHARON NETWORK PROTOCOL v${PROTOCOL_VERSION}`;
+byId("protocolVersion").textContent = `SATURN DEVOURING NETWORK PROTOCOL v${PROTOCOL_VERSION}`;
 var pages = [...document.querySelectorAll("[data-launch-page]")];
 var launcherGamepad = new StandardGamepad();
 var lobbyNames = /* @__PURE__ */ new Map();
@@ -101195,7 +101195,7 @@ async function launchGame(config) {
     document.body.classList.add("launcher-active");
     showPage("menu");
     const notice = byId("menu-notice");
-    notice.textContent = `Could not start Charon: ${error2.message}`;
+    notice.textContent = `Could not start Saturn Devouring: ${error2.message}`;
     notice.hidden = false;
     throw error2;
   }
@@ -101484,6 +101484,6 @@ globalThis.peerd?.agent?.expose({
   }
 });
 
-// charon-dwapp-hub.mjs
+// saturn-devouring-dwapp-hub.mjs
 var norm = (u2) => String(u2).replace(/^\.\//, "");
 DefaultLoadingManager.setURLModifier((u2) => globalThis.peerd?.assets?.url?.(norm(u2)) ?? u2);

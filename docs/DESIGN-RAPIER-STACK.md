@@ -18,7 +18,7 @@ build; a `takeSnapshot()` that hashes identically across machines). Choosing
 Rapier for that reason removed Havok's one big advantage (its first-party
 integration into Babylon), and:
 
-- charon is **already on Three.js** — no renderer migration;
+- Saturn Devouring is **already on Three.js** — no renderer migration;
 - Rapier pairs idiomatically with a custom/Three renderer (there is no
   first-party Rapier plugin for Babylon anyway);
 - the `-compat` build is **single-threaded** (no `SharedArrayBuffer`), so it

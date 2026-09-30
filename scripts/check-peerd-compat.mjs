@@ -7,15 +7,15 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PEERD = resolve(process.env.PEERD_SOURCE || join(ROOT, '..', 'peerd'));
-const scratch = await mkdtemp(join(tmpdir(), 'charon-peerd-compat-'));
-const testFile = join(scratch, 'charon-artifact.test.ts');
+const scratch = await mkdtemp(join(tmpdir(), 'saturn-devouring-peerd-compat-'));
+const testFile = join(scratch, 'saturn-devouring-artifact.test.ts');
 const exportModule = join(PEERD, 'extension', 'peerd-engine', 'export.js');
-const artifact = join(ROOT, 'dwapp', 'charon-app.peerd');
+const artifact = join(ROOT, 'dwapp', 'saturn-devouring.peerd');
 const source = `
 import { test, expect } from 'bun:test';
 import { inspectEnvelope, openEnvelope } from ${JSON.stringify(exportModule)};
 
-test('Charon release envelope opens through Peerd import primitives', async () => {
+test('Saturn Devouring release envelope opens through Peerd import primitives', async () => {
   const envelope = JSON.parse(await Bun.file(${JSON.stringify(artifact)}).text());
   const inspected = await inspectEnvelope(envelope);
   expect(inspected.ok).toBe(true);

@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "charon",
+  "main": "legacy-worker.js",
+  "compatibility_date": "2026-08-26",
+  "assets": {
+    "directory": "./dist/site",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+}

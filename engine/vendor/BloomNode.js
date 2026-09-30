@@ -66,7 +66,7 @@ class BloomNode extends TempNode {
 	 * @param {number} [strength=1] - The strength of the bloom.
 	 * @param {number} [radius=0] - The radius of the bloom.
 	 * @param {number} [threshold=0] - The luminance threshold limits which bright areas contribute to the bloom effect.
-	 * @param {number} [nMips=5] - Number of blur mips (charon patch: configurable so a 2-mip chain can match a lighter hand-rolled bloom).
+	 * @param {number} [nMips=5] - Number of blur mips (saturn-devouring patch: configurable so a 2-mip chain can match a lighter hand-rolled bloom).
 	 */
 	constructor( inputNode, strength = 1, radius = 0, threshold = 0, nMips = 5 ) {
 
@@ -145,7 +145,7 @@ class BloomNode extends TempNode {
 		 * @private
 		 * @type {number}
 		 */
-		this._nMips = Math.max( 1, Math.min( 5, nMips ) ); // charon patch: was fixed 5
+		this._nMips = Math.max( 1, Math.min( 5, nMips ) ); // saturn-devouring patch: was fixed 5
 
 		/**
 		 * The render target for the luminance pass.
@@ -211,7 +211,7 @@ class BloomNode extends TempNode {
 
 		/**
 		 * The results of the blur passes as texture nodes for further processing.
-		 * (charon patch: array sized to _nMips instead of five fixed fields)
+		 * (saturn-devouring patch: array sized to _nMips instead of five fixed fields)
 		 *
 		 * @private
 		 * @type {Array<TextureNode>}
@@ -386,7 +386,7 @@ class BloomNode extends TempNode {
 
 		// These sizes have been changed to account for the altered coefficients-calculation to avoid blockiness,
 		// while retaining the same blur-strength. For details see https://github.com/mrdoob/three.js/pull/31528
-		// (charon patch: a short chain uses smaller kernels — the wide taps existed to feed the tiny far mips)
+		// (saturn-devouring patch: a short chain uses smaller kernels — the wide taps existed to feed the tiny far mips)
 		const kernelSizeArray = this._nMips <= 2 ? [ 4, 8 ] : [ 6, 10, 14, 18, 22 ];
 
 		for ( let i = 0; i < this._nMips; i ++ ) {
@@ -417,7 +417,7 @@ class BloomNode extends TempNode {
 
 		const compositePass = Fn( () => {
 
-			// charon patch: composite only the mips that exist (JS loop unrolls into the graph)
+			// saturn-devouring patch: composite only the mips that exist (JS loop unrolls into the graph)
 			let sum = null;
 
 			for ( let i = 0; i < this._nMips; i ++ ) {
@@ -447,7 +447,7 @@ class BloomNode extends TempNode {
 	 * when the effect is no longer required.
 	 */
 	// (dispose()'s JSDoc block above belongs to dispose(), two methods down.)
-	// charon patch (perf pass 5): release the blur chain's GPU memory WITHOUT
+	// saturn-devouring patch (perf pass 5): release the blur chain's GPU memory WITHOUT
 	// touching the compiled materials — dispose() would free the high-pass,
 	// composite and blur materials, which is exactly what the quality
 	// governor's prewarm pinning spent the intro protecting. Per-target
@@ -563,7 +563,7 @@ class BloomNode extends TempNode {
  * @param {number} [strength=1] - The strength of the bloom.
  * @param {number} [radius=0] - The radius of the bloom.
  * @param {number} [threshold=0] - The luminance threshold limits which bright areas contribute to the bloom effect.
- * @param {number} [nMips=5] - Number of blur mips (charon patch).
+ * @param {number} [nMips=5] - Number of blur mips (saturn-devouring patch).
  * @returns {BloomNode}
  */
 export const bloom = ( node, strength, radius, threshold, nMips ) => new BloomNode( nodeObject( node ), strength, radius, threshold, nMips );

@@ -16,7 +16,7 @@ Why the -compat build, vendored, unmodified:
   - It is single-threaded (no SharedArrayBuffer), so it needs no COOP/COEP
     cross-origin-isolation headers — again a requirement of the dwapp sandbox.
   - Rapier's wasm build is bit-level cross-platform deterministic (same version
-    + same wasm everywhere), which is the property charon's lockstep model and
+    + same wasm everywhere), which is the property Saturn Devouring's lockstep model and
     replay/determinism harness depend on. See docs/DESIGN-RAPIER-STACK.md.
 
 Usage:

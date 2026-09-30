@@ -1,4 +1,4 @@
-// The ODST — Charon's player on the FTL engine's FpsController (engine/
+// The ODST — Saturn Devouring's player on the FTL engine's FpsController (engine/
 // fps-controller.js owns pointer-lock look, exponential-accel walking,
 // the Rapier capsule sweep, ground/step-down/ceiling vertical, and render
 // interpolation). This subclass adds everything that makes the player a
@@ -246,7 +246,7 @@ export class Player extends FpsController {
     this._outSince = 0;
     if (!this._outLogged) {
       this._outLogged = true;
-      console.warn('[charon] player was outside the hull — pulled back inside');
+      console.warn('[saturn-devouring] player was outside the hull — pulled back inside');
     }
   }
 

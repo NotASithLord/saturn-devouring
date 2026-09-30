@@ -592,6 +592,6 @@ function assertDeckConnectivity(graph) {
   const decksSeen = new Set();
   for (let i = 0; i < graph.n; i++) if (ff.dist[i] !== -1) decksSeen.add(graph.node(i).deck);
   if (decksSeen.size < 5) {
-    console.warn(`[charon] deck connectivity broken: only decks {${[...decksSeen].sort().join(',')}} reachable from the bridge — check for a lockable cross-deck edge`);
+    console.warn(`[saturn-devouring] deck connectivity broken: only decks {${[...decksSeen].sort().join(',')}} reachable from the bridge — check for a lockable cross-deck edge`);
   }
 }

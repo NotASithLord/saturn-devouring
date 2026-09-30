@@ -1,6 +1,6 @@
 import { createGuardAlarm } from './guard-alarm.js';
 import { roomTransmission } from './acoustics.js';
-// HALO CHARON — 3D slice (docs/ROADMAP-3D.md): an ODST with a fireteam,
+// SATURN DEVOURING — 3D slice (docs/ROADMAP-3D.md): an ODST with a fireteam,
 // dropped into the ship while the FULL simulation plays out around them.
 // Mechanics layer ported from the first-strike vertical slice (MA5 loop,
 // armor-over-health, movement feel). The sim is untouched and authoritative.
@@ -96,14 +96,14 @@ try {
 // the exception in the screenshot instead of "it froze".
 let _fatalShown = 0, _renderFails = 0, _renderStopped = false;
 function reportFatal(what, err) {
-  console.error('[charon] ' + what, err);
+  console.error('[saturn-devouring] ' + what, err);
   if (_fatalShown >= 3) return;
   _fatalShown++;
   const div = document.createElement('div');
   div.style.cssText = 'position:fixed;left:10px;top:' + (40 + _fatalShown * 92) + 'px;z-index:99;'
     + 'max-width:52em;background:rgba(60,10,10,0.94);color:#ffb0a0;font:11px monospace;'
     + 'padding:6px 8px;border:1px solid #a05040;white-space:pre-wrap;pointer-events:none';
-  div.textContent = 'CHARON ' + what.toUpperCase() + ': '
+  div.textContent = 'SATURN DEVOURING ' + what.toUpperCase() + ': '
     + String(err?.message ?? err).slice(0, 400)
     + '\n' + String(err?.stack ?? '').split('\n').slice(1, 5).join('\n').slice(0, 600);
   document.body.appendChild(div);
@@ -128,7 +128,7 @@ window.addEventListener('unhandledrejection', (e) => {
         + 'padding:6px 8px;border:1px solid #a05040;white-space:pre-wrap;pointer-events:none';
       div.textContent = 'WEBGPU ERROR: ' + String(e.error?.message ?? e.error).slice(0, 500);
       document.body.appendChild(div);
-      console.error('[charon webgpu]', e.error);
+      console.error('[saturn-devouring webgpu]', e.error);
     });
   }
 }
@@ -309,7 +309,7 @@ const seed = seedFromUrl || 'run-' + Math.random().toString(36).slice(2, 10);
 // fallback (WebGPU) or in place with a session cap (WebGL2), rebooting
 // into the same seed — same ship.
 installDeviceLostReload(renderer, {
-  label: 'charon', storageKey: 'charon-gl-lost', params: { seed },
+  label: 'saturn-devouring', storageKey: 'charon-gl-lost', params: { seed },
 });
 // MORE GUNS, MORE FLOOD: every additional fireteam member adds three forms.
 // initRun chooses the 10/12 solo base from the seeded crash deck. The member
@@ -356,7 +356,7 @@ initRapier().then(() => {
   // seal releases): one parked/placed fixed box per door, toggled below
   physics.setDoorBoxes(world.doorBoxes());
   player.attachPhysics(physics);
-}).catch((e) => console.error('[charon] Rapier physics failed to initialise:', e));
+}).catch((e) => console.error('[saturn-devouring] Rapier physics failed to initialise:', e));
 agents.playerId = player.agent.id;
 const fireteam = networkSquads.get(LAUNCH.session?.did) ?? sim.attachPlayerSquad(player.agent, 3);
 // The ship-strength meter tracks the mobile fighting complement. Deck 1 room
@@ -820,7 +820,7 @@ let rung = 0;
 // the governor (engine/runtime.js) walks the ladder; the per-rung EFFECTS
 // stay here — they touch this game's torch, light pool, bloom and motes
 const governor = new QualityGovernor({
-  renderer, rungs: RUNGS, pixelBudget: PIXEL_BUDGET, hd: HD, label: 'charon',
+  renderer, rungs: RUNGS, pixelBudget: PIXEL_BUDGET, hd: HD, label: 'saturn-devouring',
   apply: (R, i) => {
     rung = i;
     // Keep castShadow and map size fixed: cached WebGPU pipelines retain
@@ -1569,7 +1569,7 @@ function victoryScreen() {
   endScreen('OUTBREAK CONTAINED', rank.blurb);
   resultCard({
     headline: rank.name, color: rank.color, label: 'FINAL TIME', secs,
-    share: `I contained the Flood outbreak aboard the UNSC Saturn Devouring in ${fmtTime(secs)} — ${rank.name}. #HaloCharon`,
+    share: `I contained the Flood outbreak aboard the UNSC Saturn Devouring in ${fmtTime(secs)} — ${rank.name}. #SaturnDevouring`,
   });
 }
 function defeatScreen(title, text) {
@@ -1578,7 +1578,7 @@ function defeatScreen(title, text) {
   endScreen(title, text);
   resultCard({
     headline: 'OVERRUN', color: '#ff6a4d', label: 'YOU SURVIVED', secs,
-    share: `The Flood took the UNSC Saturn Devouring — I survived ${fmtTime(secs)}. #HaloCharon`,
+    share: `The Flood took the UNSC Saturn Devouring — I survived ${fmtTime(secs)}. #SaturnDevouring`,
   });
 }
 function resultCard({ headline, color, label, secs, share }) {
@@ -1630,7 +1630,7 @@ function resultCard({ headline, color, label, secs, share }) {
   });
   // phones and Safari get the real share sheet; everything else has the two above
   if (navigator.share) {
-    mkBtn('SHARE…', () => navigator.share({ title: 'Halo Charon', text: share, url }).catch(() => {}), true);
+    mkBtn('SHARE…', () => navigator.share({ title: 'Saturn Devouring', text: share, url }).catch(() => {}), true);
   }
   if (player.dead) {
     mkBtn('WATCH BODY', () => {

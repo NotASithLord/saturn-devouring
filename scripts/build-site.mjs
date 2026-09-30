@@ -40,8 +40,9 @@ const OUT = join(ROOT, 'dist', 'site');
 // Kept in step with .assetsignore — anything here is tooling, not the site.
 const SKIP = new Set([
   '.git', '.claude', '.wrangler', 'node_modules', 'dist', 'docs', 'scripts',
-  'dwapp', '.assetsignore', 'wrangler.jsonc', 'package.json', 'package-lock.json',
-  'README.md', '.gitignore', 'worker.js', 'worker-check.mjs',
+  'dwapp', '.assetsignore', 'wrangler.jsonc', 'wrangler.legacy.jsonc',
+  'package.json', 'package-lock.json', 'README.md', '.gitignore',
+  'worker.js', 'legacy-worker.js', 'worker-check.mjs',
 ]);
 
 async function mirror(from, to) {

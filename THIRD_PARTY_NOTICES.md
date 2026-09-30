@@ -24,7 +24,7 @@ code remains MIT; users must obtain any necessary third-party permissions.
 ## Halo attribution
 
 Halo: Combat Evolved, Halo 2, and Halo 3 © Microsoft Corporation.
-Charon (Saturn Devouring) was created under Microsoft's "Game Content Usage
+Saturn Devouring was created under Microsoft's "Game Content Usage
 Rules" using assets from Halo: Combat Evolved, Halo 2, and Halo 3, and it is not
 endorsed by or affiliated with Microsoft.
 

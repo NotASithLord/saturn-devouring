@@ -127,7 +127,7 @@ class SessionBase {
     // failed to connect in BOTH directions. One bad HUD line should cost a
     // HUD line, not the call.
     for (const callback of this.listeners.get(event) ?? []) {
-      try { callback(value); } catch (error) { console.error('[charon] session listener failed', event, error); }
+      try { callback(value); } catch (error) { console.error('[saturn-devouring] session listener failed', event, error); }
     }
   }
 

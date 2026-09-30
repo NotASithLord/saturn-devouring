@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Bundles the browser-facing subset of peerd's audited room primitives for
-// Charon's standalone web build. The peerd dwapp never loads this path at
+// Saturn Devouring's standalone web build. The peerd dwapp never loads this path at
 // runtime because its trusted parent bridge owns the network.
 
 import { build } from 'esbuild';
@@ -29,7 +29,7 @@ await build({
       "export { createDirect } from './peerd-distributed/messaging/direct.js';",
     ].join('\n'),
     resolveDir: EXTENSION,
-    sourcefile: 'charon-peerd-browser-entry.js',
+    sourcefile: 'saturn-devouring-peerd-browser-entry.js',
     loader: 'js',
   },
   bundle: true,

@@ -3,7 +3,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const LIVE_PROTOCOL_URL = 'https://charon.arieldeschapell.workers.dev/multiplayer/protocol.js';
+const LIVE_PROTOCOL_URLS = [
+  'https://saturn-devouring.arieldeschapell.workers.dev/multiplayer/protocol.js',
+  'https://charon.arieldeschapell.workers.dev/multiplayer/protocol.js',
+];
 
 function protocolVersion(source, label) {
   const match = source.match(/PROTOCOL_VERSION\s*=\s*(\d+)/);
@@ -23,14 +26,15 @@ if (builtVersion !== sourceVersion) {
   throw new Error(`site build carries protocol v${builtVersion}, but source carries v${sourceVersion}`);
 }
 
-const response = await fetch(LIVE_PROTOCOL_URL, {
-  cache: 'no-store',
-  headers: { 'cache-control': 'no-cache' },
-});
-if (!response.ok) throw new Error(`could not verify the live protocol (${response.status})`);
-const liveVersion = protocolVersion(await response.text(), LIVE_PROTOCOL_URL);
-if (liveVersion > sourceVersion) {
-  throw new Error(`refusing to roll the live co-op protocol back from v${liveVersion} to v${sourceVersion}`);
+for (const url of LIVE_PROTOCOL_URLS) {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'cache-control': 'no-cache' },
+  });
+  if (!response.ok) throw new Error(`could not verify the live protocol at ${url} (${response.status})`);
+  const liveVersion = protocolVersion(await response.text(), url);
+  if (liveVersion > sourceVersion) {
+    throw new Error(`refusing to roll the live co-op protocol back from v${liveVersion} to v${sourceVersion}`);
+  }
+  console.log(`deployment protocol check passed: ${new URL(url).host} v${liveVersion} -> build v${builtVersion}`);
 }
-
-console.log(`deployment protocol check passed: live v${liveVersion} -> build v${builtVersion}`);

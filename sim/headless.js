@@ -6,7 +6,7 @@
 import { Sim, fmtTime } from './sim.js';
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-const seed = args[0] ?? 'charon-1';
+const seed = args[0] ?? 'saturn-1';
 const minutes = Number(args[1] ?? 20);
 const quiet = process.argv.includes('--quiet');
 

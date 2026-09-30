@@ -18311,7 +18311,7 @@ function createInstanceMatrixNode( builder, instanceMatrix, count ) {
 
 	const isStorageMatrix = instanceMatrix.isStorageInstancedBufferAttribute === true;
 
-	// CHARON PATCH -- size the array from the attribute's CAPACITY, not the
+	// SATURN DEVOURING PATCH -- size the array from the attribute's CAPACITY, not the
 	// mesh's live draw count.
 	//
 	// The array length is baked into the WGSL at first build, and nothing ever
@@ -18438,7 +18438,7 @@ const instance = /*@__PURE__*/ Fn( ( [ count, matrices, colors = null ], builder
 
 	if ( ! isStorageMatrix ) {
 
-		// CHARON PATCH: capacity, to match createInstanceMatrixNode's choice
+		// SATURN DEVOURING PATCH: capacity, to match createInstanceMatrixNode's choice
 		const uniformBufferSize = Math.max( matrices.count | 0, count | 0, 1 ) * 16 * 4;
 
 		if ( uniformBufferSize > builder.getUniformBufferLimit() ) {
@@ -40947,7 +40947,7 @@ class PassNode extends TempNode {
 	 */
 	async compileAsync( renderer, signal = null ) {
 
-		// charon patch: restore the render target on the SAME TICK, not after
+		// saturn-devouring patch: restore the render target on the SAME TICK, not after
 		// the await. Renderer.compileAsync consumes the active target only in
 		// its synchronous prefix (it builds the render context and queues the
 		// per-object compilation items, then awaits per item, deliberately
@@ -41076,7 +41076,7 @@ class PassNode extends TempNode {
 
 		scene.name = this.name ? this.name : scene.name;
 
-		// charon patch: try/finally. Without it, a throw inside the scene render
+		// saturn-devouring patch: try/finally. Without it, a throw inside the scene render
 		// skips every restore below — most destructively `setRenderTarget`, which
 		// leaves the renderer pointing at THIS pass's HDR target. From the next
 		// frame on, _renderScene sees a non-null renderTarget, never reaches
@@ -75460,7 +75460,7 @@ class GPUTextureViewDescriptor {
 		 * @type {string}
 		 * @default 'rgba'
 		 */
-		this.swizzle = undefined; // charon patch: build only ever uses the identity swizzle; undefined omits the key for pre-swizzle Chromium
+		this.swizzle = undefined; // saturn-devouring patch: build only ever uses the identity swizzle; undefined omits the key for pre-swizzle Chromium
 
 	}
 
@@ -75478,7 +75478,7 @@ class GPUTextureViewDescriptor {
 		this.mipLevelCount = undefined;
 		this.baseArrayLayer = 0;
 		this.arrayLayerCount = undefined;
-		this.swizzle = undefined; // charon patch: build only ever uses the identity swizzle; undefined omits the key for pre-swizzle Chromium
+		this.swizzle = undefined; // saturn-devouring patch: build only ever uses the identity swizzle; undefined omits the key for pre-swizzle Chromium
 
 	}
 

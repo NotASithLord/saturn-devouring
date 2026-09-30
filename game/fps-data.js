@@ -1,5 +1,5 @@
 // FPS mechanics constants — ported from the first-strike vertical slice
-// (js/data.js), tuned for the Charon. Decoupling contract preserved:
+// (js/data.js), tuned for Saturn Devouring. Decoupling contract preserved:
 // mechanics read these rows, nothing hardcodes a name.
 
 export const MA5 = {

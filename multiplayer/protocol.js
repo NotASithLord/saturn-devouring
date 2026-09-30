@@ -36,6 +36,8 @@
 // the same room at all instead of staring at frozen NPCs.
 export const PROTOCOL_VERSION = 20;
 export const MAX_PLAYERS = 4;
+// Historical wire namespace: keep it so existing Saturn Devouring players
+// and peerd packages can still discover the same quick-match/private rooms.
 export const QUICKPLAY_ROOM = `charon:quickplay:v${PROTOCOL_VERSION}`;
 const ROOM_PREFIX = `charon:v${PROTOCOL_VERSION}:`;
 const SAFE_CODE = /^[a-z0-9][a-z0-9-]{5,47}$/;

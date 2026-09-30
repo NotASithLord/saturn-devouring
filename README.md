@@ -1,7 +1,7 @@
-# Charon (Saturn Devouring)
+# Saturn Devouring
 
-Charon is a browser-native systemic survival game aboard the UNSC *Saturn
-Devouring*. The ship simulation continues with or without the player: marines
+Saturn Devouring is a browser-native systemic survival game aboard the UNSC
+frigate of the same name. The ship simulation continues with or without the player: marines
 sweep, civilians panic, radios fail, and the Flood changes tactics as bodies
 and safe routes disappear.
 
@@ -23,21 +23,28 @@ Localhost is a secure browser context, so microphone capture works there.
 Production web hosting must use HTTPS for WebCrypto, WebRTC, and microphone
 access.
 
+The public game is at [saturn-devouring.arieldeschapell.workers.dev/game/](https://saturn-devouring.arieldeschapell.workers.dev/game/).
+The former `charon.arieldeschapell.workers.dev` address redirects page visits
+while continuing to serve assets and TURN requests for already-open tabs.
+
 | Route | Surface |
 |---|---|
-| `/` or `/game/` | Charon hub, solo game, co-op lobby, About, and docs |
+| `/` or `/game/` | Saturn Devouring hub, solo game, co-op lobby, About, and docs |
 | `/sim/` | Top-down deterministic simulation harness |
 | `/vat/` | WebGPU crowd-rendering harness |
 | `/fused/` | Live simulation feeding the VAT renderer |
 
 ## Multiplayer
 
-Charon has two adapters over one application protocol:
+Saturn Devouring has two adapters over one application protocol:
+
+Multiplayer room identifiers retain their historical `charon:` namespace so
+players on either link and existing peerd packages remain compatible.
 
 - In peerd, the dwapp calls the consent-gated parent bridge. Identity,
   authenticated room membership, gossip, presence, and direct messages stay on
   peerd's always-on base WebRTC mesh. The current bridge does not expose voice
-  or raw capacity statistics; Charon capability-detects both and hides voice
+  or raw capacity statistics; Saturn Devouring capability-detects both and hides voice
   when unavailable. The opaque app frame receives no raw network primitive.
 - On the web, `multiplayer/peerd-browser.js` is a generated browser bundle of
   those same peerd primitives. It establishes authenticated `did:key` WebRTC
@@ -97,7 +104,7 @@ assets/          byte-identical textures and audio exposed by peerd.assets
 peerd.json       dweb capability and attached game-developer actor contract
 ```
 
-Import the deterministic `dwapp/charon-app.peerd` artifact into peerd, or use
+Import the deterministic `dwapp/saturn-devouring.peerd` artifact into peerd, or use
 the folder while developing locally. The hub is larger
 than peerd's interactive authoring ceiling because it carries the game's source,
 textures, and audio, but remains within the import/publish package cap. Binary
@@ -108,7 +115,7 @@ observe/action playtesting primitives through a code-first `app_code` surface,
 so one short script can act, wait, and inspect the result without granting raw
 DOM, network, microphone, or extension access.
 
-The checked-in `dwapp/hub/` folder and `dwapp/charon-app.peerd` are generated
+The checked-in `dwapp/hub/` folder and `dwapp/saturn-devouring.peerd` are generated
 from the same bytes; `npm run check:dwapp` rejects stale release output.
 See [docs/PEERD-HUB.md](docs/PEERD-HUB.md) for the contract and bridge surface.
 
@@ -175,7 +182,7 @@ third-party dependencies are excluded from that grant. The assembled fan game
 is not licensed as an unrestricted commercial MIT game.
 
 Halo: Combat Evolved, Halo 2, and Halo 3 © Microsoft Corporation.
-Charon (Saturn Devouring) was created under Microsoft's
+Saturn Devouring was created under Microsoft's
 [Game Content Usage Rules](https://www.xbox.com/en-us/developers/rules)
 using assets from Halo: Combat Evolved, Halo 2, and Halo 3, and it is not
 endorsed by or affiliated with Microsoft.

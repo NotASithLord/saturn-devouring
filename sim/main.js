@@ -126,7 +126,7 @@ function applyDials() {
 }
 
 function restart() {
-  sim = new Sim(document.getElementById('seed').value.trim() || 'charon-1', swarmOverrides());
+  sim = new Sim(document.getElementById('seed').value.trim() || 'saturn-1', swarmOverrides());
   syncOpeningInfectionForms();
   applyDials();
   viz.setSim(sim);

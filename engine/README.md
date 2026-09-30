@@ -1,6 +1,6 @@
 # FTL Engine
 
-A reusable browser FPS engine, extracted from the *Halo Charon* project.
+A reusable browser FPS engine, extracted from the *Saturn Devouring* project.
 WebGPU-required (three.js node/TSL materials; a WebGL2 backend survives
 only behind the `forceWebGL` dev flag — headless CI containers cannot run
 WebGPU, so the screenshot/validation harness rides `?gl=1`),
@@ -8,7 +8,7 @@ built for moody interior shooters that must run well on integrated
 laptop GPUs and package as a single self-contained file.
 
 The engine is **game-agnostic**: nothing in this directory knows about
-Charon's ship, sim, or HUD. The game injects content and per-game policy
+Saturn Devouring's ship, sim, or HUD. The game injects content and per-game policy
 through constructor options and callbacks.
 
 ## Module map

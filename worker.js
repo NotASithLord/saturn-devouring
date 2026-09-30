@@ -53,7 +53,7 @@ export async function turnCredentials(request, env, {
         },
         body: JSON.stringify({
           ttl: TURN_CREDENTIAL_TTL_SECONDS,
-          customIdentifier: `charon-${createIdentifier()}`,
+          customIdentifier: `saturn-devouring-${createIdentifier()}`,
         }),
         signal: AbortSignal.timeout(5_000),
       },
@@ -73,6 +73,9 @@ export async function turnCredentials(request, env, {
 export default {
   async fetch(request, env) {
     if (new URL(request.url).pathname === TURN_CREDENTIALS_PATH) {
+      // The existing Worker owns the TURN secrets. Route the new hostname's
+      // same-origin request to it internally so credentials need not be copied.
+      if (env.LEGACY_API) return env.LEGACY_API.fetch(request);
       return turnCredentials(request, env);
     }
     return env.ASSETS.fetch(request);

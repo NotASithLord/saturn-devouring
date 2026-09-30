@@ -21,7 +21,7 @@ try {
 
 let sim = new Sim(document.getElementById('seed').value);
 document.getElementById('restart').addEventListener('click', () => {
-  sim = new Sim(document.getElementById('seed').value.trim() || 'charon-1');
+  sim = new Sim(document.getElementById('seed').value.trim() || 'saturn-1');
 });
 document.getElementById('seed').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('restart').click();

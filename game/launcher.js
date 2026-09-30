@@ -45,7 +45,7 @@ import {
 
 const byId = (id) => document.getElementById(id);
 const launcher = byId('launcher');
-byId('protocolVersion').textContent = `CHARON NETWORK PROTOCOL v${PROTOCOL_VERSION}`;
+byId('protocolVersion').textContent = `SATURN DEVOURING NETWORK PROTOCOL v${PROTOCOL_VERSION}`;
 const pages = [...document.querySelectorAll('[data-launch-page]')];
 const launcherGamepad = new StandardGamepad();
 const lobbyNames = new Map();
@@ -99,6 +99,7 @@ function setInputMode(mode) {
 window.addEventListener('keydown', () => setInputMode('keyboard'), true);
 window.addEventListener('pointerdown', () => setInputMode('keyboard'), true);
 
+// Keep existing storage keys and launch event as compatibility identifiers.
 const LAUNCHER_HISTORY_KEY = 'charonLauncher';
 const VALID_LAUNCH_PAGES = new Set(['menu', 'multiplayer', 'lobby', 'about', 'docs']);
 const focusByPage = new Map();
@@ -1366,7 +1367,7 @@ async function launchGame(config) {
     document.body.classList.add('launcher-active');
     showPage('menu');
     const notice = byId('menu-notice');
-    notice.textContent = `Could not start Charon: ${error.message}`;
+    notice.textContent = `Could not start Saturn Devouring: ${error.message}`;
     notice.hidden = false;
     throw error;
   }

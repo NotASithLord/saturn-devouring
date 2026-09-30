@@ -1,7 +1,7 @@
 // physics/ragdoll.js — the classic-Halo cosmetic ragdoll solver.
 //
 // When a body dies, Halo hands it to physics: it goes limp, is thrown off the
-// killing blow, tumbles, and settles into a heap. charon's dead used to snap
+// killing blow, tumbles, and settles into a heap. Saturn Devouring's dead used to snap
 // flat (downed combat forms rotated to -90° over 380 ms; human corpses simply
 // appeared prone) — REVIEW-PHYSICS-GAMEPLAY.md names this exact gap ("no
 // ragdolls; corpses are grey boxes; downed forms rotate flat with zero

@@ -1,4 +1,4 @@
-// physics/physics-world.js — the Rapier physics world for charon.
+// physics/physics-world.js — the Rapier physics world for Saturn Devouring.
 //
 // This is the authoritative collision layer, and it sits on the RENDER side of
 // the AgentBuffer boundary (docs/DESIGN-RAPIER-STACK.md). In this first slice

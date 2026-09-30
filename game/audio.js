@@ -1,4 +1,4 @@
-// Charon's sample bank on the FTL engine's positional synth (engine/
+// Saturn Devouring's sample bank on the FTL engine's positional synth (engine/
 // audio.js owns the harness: context, master bus, pan/attenuation,
 // through-hull far layer, ambience bed, klaxon). Everything here is the
 // GAME's sound: a procedural fallback bank plus raw packaged recordings that
