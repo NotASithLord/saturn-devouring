@@ -1914,6 +1914,7 @@ export class Sim {
       }
       if (a.move) {
         if (this._holdMarineAtRadarDoor(a, dt) || this._holdMarineAtHotLadder(a, dt)) continue;
+        this._retargetEmptyVent(a);
         const retreatPace = (a.move.retreatSprint || a.move.dartSprint)
           ? this.P.speed.chargeMult : 1;
         a.move.t += dt * retreatPace / a.move.travelSec;
@@ -2458,6 +2459,44 @@ export class Sim {
         else this._parkDrift(a, dt);
       }
     }
+  }
+
+  // A scouting pod is still inside the connected duct network until its exit
+  // climb begins. If its destination emptied meanwhile, change the outlet
+  // while hidden rather than surfacing, milling about, and diving back in.
+  _retargetEmptyVent(a) {
+    const move = a.move, task = a.task;
+    if (a.faction !== FACTION.INFECTION || move?.layer !== 'vent' || !move.hidden
+      || (task?.kind !== TASK.MOVE && task?.kind !== TASK.SCOUT)
+      || (!task.spread && !task.sweep && !task.rally)
+      || this.hive.infectionFoodAt(move.to)) return;
+    const target = Number.isInteger(task.node) && task.node !== move.to
+      && this.hive.infectionFoodAt(task.node)
+      && this.hive.infectionSurfaceSafe(task.node) ? task.node
+      : this.hive.infectionFoodTarget(a, this.graph.nodes);
+    if (target < 0 || target === move.to) return;
+    const oldLink = move.link;
+    const newLink = this.graph.ventLink(move.from, target);
+    const elapsed = move.t * move.travelSec;
+    const approach = (move.appT ?? 0) * move.travelSec;
+    const oldCrawl = (1 - (move.appT ?? 0) - (move.exitT ?? 0)) * move.travelSec;
+    const crawl = Math.max(oldCrawl * this.travelSec(newLink, 1) / this.travelSec(oldLink, 1),
+      elapsed - approach + 0.5);
+    task.node = target;
+    if (task.spread) this.hive._spreadPlan?.set(a.id, target);
+    const room = this.graph.node(target);
+    const exit = (move.from === newLink.a ? newLink.doorB : newLink.doorA) ?? newLink.door;
+    const [tx, ty] = this._moveArrivalPoint(a, room);
+    const exitSec = Math.hypot(tx - exit.x, ty - exit.y)
+      / Math.max(0.5, this.P.movement.baseMps * this._speedMult(a));
+    move.to = target;
+    move.link = newLink;
+    move.eToX = exit.x; move.eToY = exit.y;
+    move.tx = tx; move.ty = ty;
+    move.travelSec = approach + crawl + exitSec;
+    move.t = elapsed / move.travelSec;
+    move.appT = approach / move.travelSec;
+    move.exitT = exitSec / move.travelSec;
   }
 
   // A radar check approaches an ordinary doorway but does not blindly cross

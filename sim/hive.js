@@ -1404,6 +1404,25 @@ export class Hive {
     return chosen;
   }
 
+  // The hive shares its body's inventory: a pod need not surface just to
+  // discover that a compartment has no usable host or corpse. This filters
+  // destinations; it never overrides the rule against emerging beside guns.
+  infectionFoodAt(node) {
+    return this.sim.occupants(node).some((a) => !a.dead && (
+      (a.faction === FACTION.CORPSE && a.damage < 100 && !a.claimed)
+      || ((a.faction === FACTION.CIVILIAN || a.faction === FACTION.ARMED) && a.hp > 0)
+      || (a.faction === FACTION.COMBAT && a.downed && a.damage < 100 && !a.claimed)));
+  }
+
+  infectionFoodTarget(form, targets) {
+    for (let i = 0; i < targets.length; i++) {
+      const node = targets[(form.id + i) % targets.length].idx;
+      if (node !== form.node && this.infectionSurfaceSafe(node)
+        && this.localThreat(node) <= 1 && this.infectionFoodAt(node)) return node;
+    }
+    return -1;
+  }
+
   // THE OPENING SPREAD (user redesign): count the crash room's larder; that
   // many forms stay to eat. Every spare rides the ducts out and disperses —
   // one to the medbay when its grate is safe, otherwise to the nearest quiet
@@ -1432,8 +1451,8 @@ export class Hive {
     const sorted = [...infection].sort((a, b) => a.id - b.id);
     const spares = sorted.slice(sorted.length - ventCount);
     if (!spares.length) { this._spreadPlan = plan; return plan; }
-    // candidate soft spots: living/soft/medical/storage spaces, no marine
-    // posts, nothing beside a marine post, never the breach itself
+    // A soft room's role does not mean anyone is still there. Only fan pods
+    // into compartments with usable bodies, away from marine posts.
     const posts = new Set();
     for (const n of g.nodes) {
       if (this.staticGarrison(n.idx) > 0) {
@@ -1443,8 +1462,7 @@ export class Hive {
     }
     const cands = g.nodes.filter((n) =>
       n.idx !== g.breachNode && !posts.has(n.idx) && this.infectionSurfaceSafe(n.idx)
-      && (n.roles.includes('soft') || n.roles.includes('quarters') || n.roles.includes('medbay')
-        || n.roles.includes('cargo') || n.roles.includes('maintenance') || n.roles.includes('corpse_cache')));
+      && this.infectionFoodAt(n.idx));
     // spread metric in real meters: fore-aft + same-deck beam + a heavy deck
     // term, so the fan crosses decks instead of lining up one corridor
     const dist = (a, b) => Math.abs(a.x - b.x)
@@ -1452,7 +1470,7 @@ export class Hive {
       + Math.abs(a.deck - b.deck) * 30;
     const chosen = [];
     const medbay = g.byId.get('medbay');
-    if (medbay !== undefined && !posts.has(medbay) && this.infectionSurfaceSafe(medbay)) {
+    if (medbay !== undefined && cands.some((n) => n.idx === medbay)) {
       chosen.push(medbay);
     } else if (medbay !== undefined && cands.length) {
       // Armed crew make a lone pod's medbay landing a trap. Give its
@@ -1601,6 +1619,10 @@ export class Hive {
   // work, while each form's own movement layer decides how to get there.
   sweepTarget(form, targets, kind) {
     const g = this.sim.graph;
+    if (kind === 'infection') {
+      const food = this.infectionFoodTarget(form, targets);
+      if (food !== -1) return food;
+    }
     for (let i = 0; i < targets.length; i++) {
       const node = targets[(form.id + i) % targets.length].idx;
       if (node === form.node) continue;
@@ -1661,7 +1683,13 @@ export class Hive {
     const plan = this._openingSpread(infection, bodies);
     for (const f of infection) {
       if (f.task && f.task.kind !== TASK.MOVE) continue;
-      const target = plan.get(f.id);
+      let target = plan.get(f.id);
+      // If the original room empties during a crawl, update the standing
+      // order to another body-bearing room before starting another leg.
+      if (target !== undefined && f.node !== target && !this.infectionFoodAt(target)) {
+        const next = this.infectionFoodTarget(f, coverageTargets);
+        if (next !== -1) { plan.set(f.id, next); target = next; }
+      }
       if (target !== undefined) {
         if (f.node !== target || f.move || f.path.length) {
           if (f.task?.node !== target) this.assign(f, { kind: TASK.MOVE, node: target, spread: true });

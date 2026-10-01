@@ -52,18 +52,26 @@ const openingSim = new Sim('opening-newborn-check');
 for (const agent of openingSim.agents) agent.dead = true;
 const firstPod = makeAgent(FACTION.INFECTION, openingSim.graph.breachNode, openingSim.graph);
 openingSim.spawn(firstPod);
+const openingFoodRoom = openingSim.graph.nodes.find((node) => node.roles.includes('quarters')
+  && node.idx !== openingSim.graph.breachNode && openingSim.hive.infectionSurfaceSafe(node.idx));
+assert.ok(openingFoodRoom, 'opening fixture needs a safe food room');
+const openingBody = makeAgent(FACTION.CORPSE, openingFoodRoom.idx, openingSim.graph);
+openingSim.spawn(openingBody);
+openingSim._refreshOccupancy();
 openingSim.hive._spreadPlan = null; // replace the constructor's opening roster with this fixture's pod
-openingSim.hive._openingSpread([firstPod], []);
+openingSim.hive._openingSpread([firstPod], [openingBody]);
 const newborn = makeAgent(FACTION.INFECTION, nursery.idx, openingSim.graph);
 openingSim.spawn(newborn);
 openingSim.hive.beliefs.clear();
 openingSim._refreshOccupancy();
 openingSim._computeInfluence();
-openingSim.hive.openingMove([firstPod, newborn], [], []);
+openingSim.hive.openingMove([firstPod, newborn], [], [openingBody]);
 assert.equal(newborn.task?.kind, TASK.SCOUT,
   'a pod born after the frozen opening plan must receive a coverage task');
 const planned = openingSim.hive._spreadPlan.get(firstPod.id);
 assert.notEqual(planned, undefined, 'opening fixture must assign the initial pod a spread destination');
+assert.equal(planned, openingFoodRoom.idx,
+  'opening spread must choose a room with an available body, not an empty soft room');
 const plannedRoom = openingSim.graph.node(planned);
 firstPod.node = firstPod.pnode = planned;
 firstPod.deck = plannedRoom.deck;
@@ -74,11 +82,58 @@ firstPod.path = [];
 firstPod.move = null;
 openingSim._refreshOccupancy();
 openingSim._computeInfluence();
-openingSim.hive.openingMove([firstPod, newborn], [], []);
+openingSim.hive.openingMove([firstPod, newborn], [], [openingBody]);
 assert.equal(firstPod.task?.kind, TASK.SCOUT,
   'a pod that reaches its frozen opening destination must continue coverage');
 assert.notEqual(firstPod.task.node, planned,
   'completed opening spread orders must not be reissued to the room underfoot');
+
+const emptyRoomSim = new Sim('empty-vent-exit-check');
+const realForms = emptyRoomSim.agents.filter((a) => a.faction === FACTION.INFECTION && !a.dead);
+const realBodies = emptyRoomSim.agents.filter((a) => a.faction === FACTION.CORPSE && !a.dead);
+const realPlan = emptyRoomSim.hive._openingSpread(realForms, realBodies);
+assert.ok(realPlan.size > 0, 'seed needs opening vent runners');
+for (const node of realPlan.values()) {
+  assert.ok(emptyRoomSim.hive.infectionFoodAt(node),
+    'an opening vent runner must not be sent to an empty room');
+}
+const emptyRoom = emptyRoomSim.graph.nodes.find((n) => n.idx !== emptyRoomSim.graph.breachNode
+  && !emptyRoomSim.hive.infectionFoodAt(n.idx) && emptyRoomSim.hive.infectionSurfaceSafe(n.idx));
+assert.ok(emptyRoom, 'seed needs an empty but safe room');
+const scout = realForms[0];
+const foodSweep = emptyRoomSim.hive.sweepTarget(scout,
+  [emptyRoom, ...emptyRoomSim.graph.nodes.filter((n) => n.idx !== emptyRoom.idx)], 'infection');
+assert.ok(emptyRoomSim.hive.infectionFoodAt(foodSweep),
+  'infection coverage must prefer a room with bodies over an empty safe room');
+
+const retargetSim = new Sim('vent-food-retarget-check');
+for (const agent of retargetSim.agents) agent.dead = true;
+const source = retargetSim.graph.breachNode;
+const foodRooms = retargetSim.graph.nodes.filter((n) => n.idx !== source
+  && retargetSim.hive.infectionSurfaceSafe(n.idx)).slice(0, 2);
+assert.equal(foodRooms.length, 2, 'retarget fixture needs two safe outlets');
+const crawler = makeAgent(FACTION.INFECTION, source, retargetSim.graph);
+const firstBody = makeAgent(FACTION.CORPSE, foodRooms[0].idx, retargetSim.graph);
+const nextBody = makeAgent(FACTION.CORPSE, foodRooms[1].idx, retargetSim.graph);
+retargetSim.spawn(crawler);
+retargetSim.spawn(firstBody);
+retargetSim.spawn(nextBody);
+retargetSim._refreshOccupancy();
+retargetSim.tickCount = 1;
+crawler.task = { kind: TASK.SCOUT, node: foodRooms[0].idx, sweep: true };
+retargetSim.setPath(crawler, retargetSim.graph.ventRoute(source, foodRooms[0].idx));
+for (let i = 0; i < 500 && !crawler.move?.hidden; i++) retargetSim._advanceMovement(retargetSim.dt);
+assert.ok(crawler.move?.hidden, 'crawler must be inside the duct before its target disappears');
+firstBody.dead = true;
+retargetSim._refreshOccupancy();
+retargetSim._advanceMovement(retargetSim.dt);
+assert.equal(crawler.move.to, foodRooms[1].idx,
+  'a hidden crawler must switch outlets when its destination empties');
+assert.equal(crawler.task.node, foodRooms[1].idx,
+  'the updated scouting order must agree with the chosen outlet');
+for (let i = 0; i < 1500 && crawler.move; i++) retargetSim._advanceMovement(retargetSim.dt);
+assert.equal(crawler.node, foodRooms[1].idx,
+  'the crawler must surface in the body-bearing room without visiting the empty one');
 
 const routeSim = new Sim('disconnected-route-check');
 for (const agent of routeSim.agents) agent.dead = true;

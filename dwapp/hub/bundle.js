@@ -73573,6 +73573,19 @@ var init_hive = __esm({
         if (!chosen.length && cand.length) chosen.push(cand[0].node);
         return chosen;
       }
+      // The hive shares its body's inventory: a pod need not surface just to
+      // discover that a compartment has no usable host or corpse. This filters
+      // destinations; it never overrides the rule against emerging beside guns.
+      infectionFoodAt(node) {
+        return this.sim.occupants(node).some((a2) => !a2.dead && (a2.faction === FACTION.CORPSE && a2.damage < 100 && !a2.claimed || (a2.faction === FACTION.CIVILIAN || a2.faction === FACTION.ARMED) && a2.hp > 0 || a2.faction === FACTION.COMBAT && a2.downed && a2.damage < 100 && !a2.claimed));
+      }
+      infectionFoodTarget(form, targets) {
+        for (let i2 = 0; i2 < targets.length; i2++) {
+          const node = targets[(form.id + i2) % targets.length].idx;
+          if (node !== form.node && this.infectionSurfaceSafe(node) && this.localThreat(node) <= 1 && this.infectionFoodAt(node)) return node;
+        }
+        return -1;
+      }
       // THE OPENING SPREAD (user redesign): count the crash room's larder; that
       // many forms stay to eat. Every spare rides the ducts out and disperses —
       // one to the medbay when its grate is safe, otherwise to the nearest quiet
@@ -73607,11 +73620,11 @@ var init_hive = __esm({
             for (const { to } of g2.neighbors(n2.idx, ["std"], () => true)) posts.add(to);
           }
         }
-        const cands = g2.nodes.filter((n2) => n2.idx !== g2.breachNode && !posts.has(n2.idx) && this.infectionSurfaceSafe(n2.idx) && (n2.roles.includes("soft") || n2.roles.includes("quarters") || n2.roles.includes("medbay") || n2.roles.includes("cargo") || n2.roles.includes("maintenance") || n2.roles.includes("corpse_cache")));
+        const cands = g2.nodes.filter((n2) => n2.idx !== g2.breachNode && !posts.has(n2.idx) && this.infectionSurfaceSafe(n2.idx) && this.infectionFoodAt(n2.idx));
         const dist = (a2, b2) => Math.abs(a2.x - b2.x) + (a2.deck === b2.deck ? Math.abs(a2.y - b2.y) : 0) + Math.abs(a2.deck - b2.deck) * 30;
         const chosen = [];
         const medbay = g2.byId.get("medbay");
-        if (medbay !== void 0 && !posts.has(medbay) && this.infectionSurfaceSafe(medbay)) {
+        if (medbay !== void 0 && cands.some((n2) => n2.idx === medbay)) {
           chosen.push(medbay);
         } else if (medbay !== void 0 && cands.length) {
           chosen.push(cands.reduce((best, node) => dist(node, g2.node(medbay)) < dist(best, g2.node(medbay)) ? node : best).idx);
@@ -73745,6 +73758,10 @@ var init_hive = __esm({
       // work, while each form's own movement layer decides how to get there.
       sweepTarget(form, targets, kind) {
         const g2 = this.sim.graph;
+        if (kind === "infection") {
+          const food = this.infectionFoodTarget(form, targets);
+          if (food !== -1) return food;
+        }
         for (let i2 = 0; i2 < targets.length; i2++) {
           const node = targets[(form.id + i2) % targets.length].idx;
           if (node === form.node) continue;
@@ -73790,7 +73807,14 @@ var init_hive = __esm({
         const plan = this._openingSpread(infection, bodies);
         for (const f2 of infection) {
           if (f2.task && f2.task.kind !== TASK.MOVE) continue;
-          const target = plan.get(f2.id);
+          let target = plan.get(f2.id);
+          if (target !== void 0 && f2.node !== target && !this.infectionFoodAt(target)) {
+            const next = this.infectionFoodTarget(f2, coverageTargets);
+            if (next !== -1) {
+              plan.set(f2.id, next);
+              target = next;
+            }
+          }
           if (target !== void 0) {
             if (f2.node !== target || f2.move || f2.path.length) {
               if (f2.task?.node !== target) this.assign(f2, { kind: TASK.MOVE, node: target, spread: true });
@@ -77568,6 +77592,7 @@ var init_sim = __esm({
           }
           if (a2.move) {
             if (this._holdMarineAtRadarDoor(a2, dt) || this._holdMarineAtHotLadder(a2, dt)) continue;
+            this._retargetEmptyVent(a2);
             const retreatPace = a2.move.retreatSprint || a2.move.dartSprint ? this.P.speed.chargeMult : 1;
             a2.move.t += dt * retreatPace / a2.move.travelSec;
             const from = g2.node(a2.move.from), to = g2.node(a2.move.to);
@@ -77970,6 +77995,40 @@ var init_sim = __esm({
             } else this._parkDrift(a2, dt);
           }
         }
+      }
+      // A scouting pod is still inside the connected duct network until its exit
+      // climb begins. If its destination emptied meanwhile, change the outlet
+      // while hidden rather than surfacing, milling about, and diving back in.
+      _retargetEmptyVent(a2) {
+        const move = a2.move, task = a2.task;
+        if (a2.faction !== FACTION.INFECTION || move?.layer !== "vent" || !move.hidden || task?.kind !== TASK.MOVE && task?.kind !== TASK.SCOUT || !task.spread && !task.sweep && !task.rally || this.hive.infectionFoodAt(move.to)) return;
+        const target = Number.isInteger(task.node) && task.node !== move.to && this.hive.infectionFoodAt(task.node) && this.hive.infectionSurfaceSafe(task.node) ? task.node : this.hive.infectionFoodTarget(a2, this.graph.nodes);
+        if (target < 0 || target === move.to) return;
+        const oldLink = move.link;
+        const newLink = this.graph.ventLink(move.from, target);
+        const elapsed = move.t * move.travelSec;
+        const approach = (move.appT ?? 0) * move.travelSec;
+        const oldCrawl = (1 - (move.appT ?? 0) - (move.exitT ?? 0)) * move.travelSec;
+        const crawl = Math.max(
+          oldCrawl * this.travelSec(newLink, 1) / this.travelSec(oldLink, 1),
+          elapsed - approach + 0.5
+        );
+        task.node = target;
+        if (task.spread) this.hive._spreadPlan?.set(a2.id, target);
+        const room = this.graph.node(target);
+        const exit = (move.from === newLink.a ? newLink.doorB : newLink.doorA) ?? newLink.door;
+        const [tx, ty] = this._moveArrivalPoint(a2, room);
+        const exitSec = Math.hypot(tx - exit.x, ty - exit.y) / Math.max(0.5, this.P.movement.baseMps * this._speedMult(a2));
+        move.to = target;
+        move.link = newLink;
+        move.eToX = exit.x;
+        move.eToY = exit.y;
+        move.tx = tx;
+        move.ty = ty;
+        move.travelSec = approach + crawl + exitSec;
+        move.t = elapsed / move.travelSec;
+        move.appT = approach / move.travelSec;
+        move.exitT = exitSec / move.travelSec;
       }
       // A radar check approaches an ordinary doorway but does not blindly cross
       // it while the paint is live. Stopping just inside the origin room puts the
