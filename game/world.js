@@ -626,23 +626,29 @@ export class World {
     // distinctive rim and grime recur in a tight checkerboard. Keep its
     // proportions and anchor the pattern in ship space: slabs split around
     // hatches then meet without restarting the plate at every cut.
-    const scaleFloorUV = (geo, w, d, cx = 0, cz = 0) => {
+    const scaleFloorUV = (geo, w, d, cx = 0, cz = 0, plateW = 12, plateD = 4) => {
       const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
       for (let i = 0; i < uv.count; i++) {
         if (Math.abs(n.getY(i)) > 0.5) {
-          uv.setXY(i, (p.getX(i) + cx) / 12, (p.getZ(i) + cz) / 4);
+          uv.setXY(i, (p.getX(i) + cx) / plateW, (p.getZ(i) + cz) / plateD);
         } else {
-          uv.setXY(i, uv.getX(i) * w / 12, uv.getY(i) * d / 4);
+          uv.setXY(i, uv.getX(i) * w / plateW, uv.getY(i) * d / plateD);
         }
       }
       return geo;
     };
     this._scaleFloorUV = scaleFloorUV;
-    const scaleWallUV = (geo, horiz, center, centerY, deckY, phase) => {
+    const scaleWallUV = (geo, horiz, center, centerY, deckY, phase, roomH) => {
       const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
+      // A tall hold used to repeat the entire three-metre wall graphic almost
+      // three times vertically. Let one panel span its full height, and widen
+      // it in proportion so the same rust/stripe pattern recurs less often.
+      const tall = roomH > CLEAR_H + 0.5;
+      const spanU = tall ? roomH : 4;
+      const spanV = tall ? roomH : 3;
       for (let i = 0; i < uv.count; i++) {
         const along = horiz ? p.getX(i) : p.getZ(i);
-        uv.setXY(i, (along + center) / 4 + phase, (p.getY(i) + centerY - deckY) / 3);
+        uv.setXY(i, (along + center) / spanU + phase, (p.getY(i) + centerY - deckY) / spanV);
       }
       return geo;
     };
@@ -732,7 +738,8 @@ export class World {
       // floor + ceiling with hatch holes where shafts pierce them
       const fh = floorHoles.get(n.idx) ?? [];
       if (!isStair) for (const [a0, b0, a1, b1] of rectMinusHoles(wx - n.w / 2, wz - n.d / 2, wx + n.w / 2, wz + n.d / 2, fh)) {
-        const slab = new THREE.Mesh(scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2), fmat);
+        const largeDeck = roomH > CLEAR_H + 0.5;
+        const slab = new THREE.Mesh(scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2, largeDeck ? 18 : 12, largeDeck ? 6 : 4), fmat);
         slab.position.set((a0 + a1) / 2, elev - 0.06, (b0 + b1) / 2);
         this.scene.add(slab);
       }
@@ -860,7 +867,7 @@ export class World {
           for (const c of cuts) {
             const hh = roomH - CLEAR_H;
             const header = new THREE.Mesh(
-              scaleWallUV(run.horiz ? new THREE.BoxGeometry(DOOR_W, hh, WALL_T) : new THREE.BoxGeometry(WALL_T, hh, DOOR_W), run.horiz, c.at, elev + CLEAR_H + hh / 2, elev, wallPhase),
+              scaleWallUV(run.horiz ? new THREE.BoxGeometry(DOOR_W, hh, WALL_T) : new THREE.BoxGeometry(WALL_T, hh, DOOR_W), run.horiz, c.at, elev + CLEAR_H + hh / 2, elev, wallPhase, roomH),
               matWall);
             if (run.horiz) header.position.set(c.at, elev + CLEAR_H + hh / 2, run.fixed);
             else header.position.set(run.fixed, elev + CLEAR_H + hh / 2, c.at);
@@ -871,7 +878,7 @@ export class World {
         const addWallBox = (a, b, y, height) => {
           const len = b - a;
           const wall = new THREE.Mesh(
-            scaleWallUV(run.horiz ? new THREE.BoxGeometry(len, height, WALL_T) : new THREE.BoxGeometry(WALL_T, height, len), run.horiz, (a + b) / 2, y, elev, wallPhase),
+            scaleWallUV(run.horiz ? new THREE.BoxGeometry(len, height, WALL_T) : new THREE.BoxGeometry(WALL_T, height, len), run.horiz, (a + b) / 2, y, elev, wallPhase, roomH),
             matWall);
           if (run.horiz) wall.position.set((a + b) / 2, y, run.fixed);
           else wall.position.set(run.fixed, y, (a + b) / 2);

@@ -80294,23 +80294,26 @@ var init_world = __esm({
           }
           return m2;
         };
-        const scaleFloorUV = (geo, w4, d2, cx = 0, cz = 0) => {
+        const scaleFloorUV = (geo, w4, d2, cx = 0, cz = 0, plateW = 12, plateD = 4) => {
           const p2 = geo.attributes.position, n2 = geo.attributes.normal, uv3 = geo.attributes.uv;
           for (let i2 = 0; i2 < uv3.count; i2++) {
             if (Math.abs(n2.getY(i2)) > 0.5) {
-              uv3.setXY(i2, (p2.getX(i2) + cx) / 12, (p2.getZ(i2) + cz) / 4);
+              uv3.setXY(i2, (p2.getX(i2) + cx) / plateW, (p2.getZ(i2) + cz) / plateD);
             } else {
-              uv3.setXY(i2, uv3.getX(i2) * w4 / 12, uv3.getY(i2) * d2 / 4);
+              uv3.setXY(i2, uv3.getX(i2) * w4 / plateW, uv3.getY(i2) * d2 / plateD);
             }
           }
           return geo;
         };
         this._scaleFloorUV = scaleFloorUV;
-        const scaleWallUV = (geo, horiz, center, centerY, deckY, phase) => {
+        const scaleWallUV = (geo, horiz, center, centerY, deckY, phase, roomH) => {
           const p2 = geo.attributes.position, n2 = geo.attributes.normal, uv3 = geo.attributes.uv;
+          const tall = roomH > CLEAR_H + 0.5;
+          const spanU = tall ? roomH : 4;
+          const spanV = tall ? roomH : 3;
           for (let i2 = 0; i2 < uv3.count; i2++) {
             const along = horiz ? p2.getX(i2) : p2.getZ(i2);
-            uv3.setXY(i2, (along + center) / 4 + phase, (p2.getY(i2) + centerY - deckY) / 3);
+            uv3.setXY(i2, (along + center) / spanU + phase, (p2.getY(i2) + centerY - deckY) / spanV);
           }
           return geo;
         };
@@ -80394,7 +80397,8 @@ var init_world = __esm({
           if (isStair) this._buildStairRoom(n2);
           const fh = floorHoles.get(n2.idx) ?? [];
           if (!isStair) for (const [a0, b0, a1, b1] of rectMinusHoles(wx - n2.w / 2, wz - n2.d / 2, wx + n2.w / 2, wz + n2.d / 2, fh)) {
-            const slab = new Mesh(scaleFloorUV(new BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2), fmat);
+            const largeDeck = roomH > CLEAR_H + 0.5;
+            const slab = new Mesh(scaleFloorUV(new BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2, largeDeck ? 18 : 12, largeDeck ? 6 : 4), fmat);
             slab.position.set((a0 + a1) / 2, elev - 0.06, (b0 + b1) / 2);
             this.scene.add(slab);
           }
@@ -80503,7 +80507,7 @@ var init_world = __esm({
               for (const c2 of cuts) {
                 const hh = roomH - CLEAR_H;
                 const header = new Mesh(
-                  scaleWallUV(run.horiz ? new BoxGeometry(DOOR_W, hh, WALL_T) : new BoxGeometry(WALL_T, hh, DOOR_W), run.horiz, c2.at, elev + CLEAR_H + hh / 2, elev, wallPhase),
+                  scaleWallUV(run.horiz ? new BoxGeometry(DOOR_W, hh, WALL_T) : new BoxGeometry(WALL_T, hh, DOOR_W), run.horiz, c2.at, elev + CLEAR_H + hh / 2, elev, wallPhase, roomH),
                   matWall
                 );
                 if (run.horiz) header.position.set(c2.at, elev + CLEAR_H + hh / 2, run.fixed);
@@ -80515,7 +80519,7 @@ var init_world = __esm({
             const addWallBox = (a2, b2, y2, height) => {
               const len = b2 - a2;
               const wall = new Mesh(
-                scaleWallUV(run.horiz ? new BoxGeometry(len, height, WALL_T) : new BoxGeometry(WALL_T, height, len), run.horiz, (a2 + b2) / 2, y2, elev, wallPhase),
+                scaleWallUV(run.horiz ? new BoxGeometry(len, height, WALL_T) : new BoxGeometry(WALL_T, height, len), run.horiz, (a2 + b2) / 2, y2, elev, wallPhase, roomH),
                 matWall
               );
               if (run.horiz) wall.position.set((a2 + b2) / 2, y2, run.fixed);
