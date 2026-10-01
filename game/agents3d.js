@@ -1061,8 +1061,13 @@ export class Agents3D {
     else if (hx < -1e-4) t = Math.min(t, (nd.x - nd.w / 2 - ox) / hx);
     if (hy > 1e-4) t = Math.min(t, (nd.y + nd.d / 2 - oy) / hy);
     else if (hy < -1e-4) t = Math.min(t, (nd.y - nd.d / 2 - oy) / hy);
-    t = Math.max(1.4, t - 0.4);
+    const roomWall = t < 16;
+    t = Math.max(0.1, t - 0.1);
     const [owx, owz] = this.world.simToWorld(ox, oy, deck);
+    const rayLength = this.world.lightRayDistance(owx, elev + muzzleY, owz,
+      hx * Math.cos(tilt), Math.sin(tilt), hy * Math.cos(tilt), 16);
+    const blocked = roomWall || rayLength < 15.999;
+    if (rayLength < t) t = Math.max(0.1, rayLength - 0.12);
     const [hwx, hwz] = this.world.simToWorld(ox + hx * t, oy + hy * t, deck);
     const r = this.rifleLights[this.rifleLightN]
       ?? (this.rifleLights[this.rifleLightN] = {});
@@ -1079,7 +1084,7 @@ export class Agents3D {
     const rise = Math.max(-muzzleY, Math.min(muzzleY + 1.5, Math.tan(tilt) * t));
     r.ox = owx; r.oy = elev + muzzleY; r.oz = owz;
     r.tx = hwx; r.ty = elev + muzzleY + rise; r.tz = hwz;
-    r.throw = t; r.d2 = d2;
+    r.throw = t; r.blocked = blocked; r.d2 = d2;
     this.rifleLightN++;
   }
 
@@ -1538,8 +1543,8 @@ export class Agents3D {
             // elevation once the lean and the bob have swung it
             const mz = this._aimOf(carry.rifle, curBob, lean);
             if (sim.fogAt(buf.nodeId[i])) { // only fog gives the shaft something to scatter off
-              this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev);
-              this.beams.setMatrixAt(counts.beam++, this._m);
+              if (this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev))
+                this.beams.setMatrixAt(counts.beam++, this._m);
             }
             this._addRifleLight(buf.nodeId[i], buf.posX[i], buf.posY[i], deck, elev, -heading,
               mz.y, mz.yaw, mz.elev);
@@ -1572,8 +1577,8 @@ export class Agents3D {
           if (this._needsLamp(buf.nodeId[i])) {
             const mz = this._aimOf(carry.rifle, curBob, lean);
             if (sim.fogAt(buf.nodeId[i])) {
-              this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev);
-              this.beams.setMatrixAt(counts.beam++, this._m);
+              if (this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev))
+                this.beams.setMatrixAt(counts.beam++, this._m);
             }
             this._addRifleLight(buf.nodeId[i], buf.posX[i], buf.posY[i], deck, elev, -heading,
               mz.y, mz.yaw, mz.elev);
@@ -1986,10 +1991,15 @@ export class Agents3D {
   _beamAt(x, y, z, rotY, yaw = RIFLE_YAW, elev = 0) {
     rotY += yaw;                                  // down the barrel, like the light
     const fx = Math.cos(rotY) * Math.cos(elev), fz = -Math.sin(rotY) * Math.cos(elev);
+    const ox = x + fx * 0.35, oy = y + Math.sin(elev) * 0.35, oz = z + fz * 0.35;
+    const hit = this.world.lightRayDistance(ox, oy, oz, fx, Math.sin(elev), fz, 6);
+    const length = hit < 6 ? Math.max(0, hit - 0.18) : 6;
+    if (length < 0.25) return false;
     this._e.set(0, rotY, elev);
     this._q.setFromEuler(this._e);
-    this._m.compose(this._p.set(x + fx * 0.35, y + Math.sin(elev) * 0.35, z + fz * 0.35),
-      this._q, this._s.set(1, 1, 1));
+    this._m.compose(this._p.set(ox, oy, oz), this._q,
+      this._s.set(length / 6, length / 6, length / 6));
+    return true;
   }
 
   _rifleAt(x, y, z, rotY) {

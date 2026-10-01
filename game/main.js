@@ -1013,7 +1013,10 @@ function updateRoomLightPool(inDark, pnode, pDeck, pX, pZ) {
     // landing brightness. Put the cutoff well beyond the throw and let the
     // decay do the work — the beam then dies with range instead of with an
     // arbitrary radius.
-    T.distance = r.throw * 1.6 + 8;
+    // No team shadow map: the first solid hit must also cap the spotlight's
+    // physical reach, or the visible shaft stops at the wall while its light
+    // still paints the compartment behind it.
+    T.distance = r.blocked ? r.throw + 0.35 : r.throw * 1.6 + 8;
     T.intensity = TEAM_TORCH_CD;
   }
   // OVERFLOW ONLY, and kept on a very short leash. A point light AT the wall
@@ -1024,6 +1027,7 @@ function updateRoomLightPool(inDark, pnode, pDeck, pX, pZ) {
   const rlCap = RUNGS[rung].rifleLights ?? 4;
   for (let i = spots; i < Math.min(lit.length, spots + rlCap); i++) {
     const r = lit[i];
+    if (r.blocked) continue; // a point source cannot respect the wall it hit
     const bx = r.tx - r.ox, bz = r.tz - r.oz;
     const bl = Math.hypot(bx, bz) || 1;
     lightPool.add(r.tx - bx / bl * 1.3, r.ty, r.tz - bz / bl * 1.3,

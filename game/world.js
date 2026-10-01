@@ -9,6 +9,7 @@
 import * as THREE from '../engine/vendor/three.webgpu.module.js';
 import { InstancedEmissiveFixtures } from '../engine/lights.js';
 import { RNG } from '../shared/rng.js';
+import { rayBoxDistance } from './light-occlusion.js';
 import { DECK_H, CLEAR_H, elevOf, clearHeightOf, floorBandOf, stairWellDims, switchbackElev } from '../shared/geometry.js';
 
 // Deck stacking + per-room clear height live in shared/geometry.js so the
@@ -268,6 +269,39 @@ export class World {
     // mid-session now, so their colliders are dynamic (doorBoxes below,
     // toggled through PhysicsWorld.setDoorClosed)
     return [...(this._collBoxCache ?? [])];
+  }
+
+  // First physical surface along a weapon lamp. Use the unmerged collision
+  // boxes so an interior bulkhead, stair rail or cover can stop the beam;
+  // the node's outer rectangle alone misses all of those. Door halves move,
+  // so test their current slide position separately.
+  lightRayDistance(ox, oy, oz, dx, dy, dz, maxDistance) {
+    let nearest = maxDistance;
+    const test = (box) => {
+      const radius = Math.max(box.hx, box.hz);
+      const mid = nearest * 0.5;
+      if (Math.abs(box.cx - (ox + dx * mid)) > Math.abs(dx) * mid + radius
+        || Math.abs(box.cz - (oz + dz * mid)) > Math.abs(dz) * mid + radius
+        || Math.abs(box.cy - (oy + dy * mid)) > Math.abs(dy) * mid + box.hy) return;
+      nearest = Math.min(nearest, rayBoxDistance(ox, oy, oz, dx, dy, dz, box, nearest));
+    };
+    for (const box of this._collBoxCache ?? []) test(box);
+    for (const d of this.doors) {
+      if (d.open01 >= 0.96) continue;
+      const ux = Math.cos(d.phi), uz = Math.sin(d.phi);
+      const slide = d.open01 * (DOOR_W / 2 + 0.22);
+      for (const side of [-1, 1]) {
+        const off = side * (this._doorPW / 2 - 0.03 + slide + (d.buckle?.gap ?? 0) / 2);
+        const out = d.buckle?.out ?? 0;
+        test({
+          cx: d.x + ux * off - uz * out, cy: d.elev + this._doorPH / 2,
+          cz: d.z + uz * off + ux * out,
+          hx: this._doorPW / 2, hy: this._doorPH / 2, hz: 0.075,
+          ry: -d.phi,
+        });
+      }
+    }
+    return nearest;
   }
 
   // one collider box per door, spanning the closed opening; `closed` follows

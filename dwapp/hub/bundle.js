@@ -79719,6 +79719,44 @@ var init_lights = __esm({
   }
 });
 
+// game/light-occlusion.js
+function rayBoxDistance(ox, oy, oz, dx, dy, dz, box, limit) {
+  const c2 = Math.cos(box.ry || 0), s2 = Math.sin(box.ry || 0);
+  const px2 = ox - box.cx, pz2 = oz - box.cz;
+  const lx = c2 * px2 - s2 * pz2, ly = oy - box.cy, lz = s2 * px2 + c2 * pz2;
+  const vx = c2 * dx - s2 * dz, vy = dy, vz = s2 * dx + c2 * dz;
+  let near = 0, far = limit;
+  if (Math.abs(vx) < 1e-8) {
+    if (Math.abs(lx) > box.hx) return Infinity;
+  } else {
+    const a2 = (-box.hx - lx) / vx, b2 = (box.hx - lx) / vx;
+    near = Math.max(near, Math.min(a2, b2));
+    far = Math.min(far, Math.max(a2, b2));
+    if (near > far) return Infinity;
+  }
+  if (Math.abs(vy) < 1e-8) {
+    if (Math.abs(ly) > box.hy) return Infinity;
+  } else {
+    const a2 = (-box.hy - ly) / vy, b2 = (box.hy - ly) / vy;
+    near = Math.max(near, Math.min(a2, b2));
+    far = Math.min(far, Math.max(a2, b2));
+    if (near > far) return Infinity;
+  }
+  if (Math.abs(vz) < 1e-8) {
+    if (Math.abs(lz) > box.hz) return Infinity;
+  } else {
+    const a2 = (-box.hz - lz) / vz, b2 = (box.hz - lz) / vz;
+    near = Math.max(near, Math.min(a2, b2));
+    far = Math.min(far, Math.max(a2, b2));
+    if (near > far) return Infinity;
+  }
+  return near;
+}
+var init_light_occlusion = __esm({
+  "game/light-occlusion.js"() {
+  }
+});
+
 // game/world.js
 function observationSideForRoom(room) {
   if (!room?.row || room.type === "corridor") return null;
@@ -79866,6 +79904,7 @@ var init_world = __esm({
     init_three_webgpu_module();
     init_lights();
     init_rng();
+    init_light_occlusion();
     init_geometry();
     DOOR_W = 1.7;
     WALL_T = 0.16;
@@ -79943,6 +79982,39 @@ var init_world = __esm({
       // meshes the player sees means physics can never drift from the render.
       collisionBoxes() {
         return [...this._collBoxCache ?? []];
+      }
+      // First physical surface along a weapon lamp. Use the unmerged collision
+      // boxes so an interior bulkhead, stair rail or cover can stop the beam;
+      // the node's outer rectangle alone misses all of those. Door halves move,
+      // so test their current slide position separately.
+      lightRayDistance(ox, oy, oz, dx, dy, dz, maxDistance) {
+        let nearest = maxDistance;
+        const test = (box) => {
+          const radius = Math.max(box.hx, box.hz);
+          const mid = nearest * 0.5;
+          if (Math.abs(box.cx - (ox + dx * mid)) > Math.abs(dx) * mid + radius || Math.abs(box.cz - (oz + dz * mid)) > Math.abs(dz) * mid + radius || Math.abs(box.cy - (oy + dy * mid)) > Math.abs(dy) * mid + box.hy) return;
+          nearest = Math.min(nearest, rayBoxDistance(ox, oy, oz, dx, dy, dz, box, nearest));
+        };
+        for (const box of this._collBoxCache ?? []) test(box);
+        for (const d2 of this.doors) {
+          if (d2.open01 >= 0.96) continue;
+          const ux = Math.cos(d2.phi), uz = Math.sin(d2.phi);
+          const slide = d2.open01 * (DOOR_W / 2 + 0.22);
+          for (const side of [-1, 1]) {
+            const off = side * (this._doorPW / 2 - 0.03 + slide + (d2.buckle?.gap ?? 0) / 2);
+            const out = d2.buckle?.out ?? 0;
+            test({
+              cx: d2.x + ux * off - uz * out,
+              cy: d2.elev + this._doorPH / 2,
+              cz: d2.z + uz * off + ux * out,
+              hx: this._doorPW / 2,
+              hy: this._doorPH / 2,
+              hz: 0.075,
+              ry: -d2.phi
+            });
+          }
+        }
+        return nearest;
       }
       // one collider box per door, spanning the closed opening; `closed` follows
       // the sim's lock state and the physics layer parks open doors far below
@@ -83708,8 +83780,20 @@ var init_agents3d = __esm({
         else if (hx < -1e-4) t2 = Math.min(t2, (nd.x - nd.w / 2 - ox) / hx);
         if (hy > 1e-4) t2 = Math.min(t2, (nd.y + nd.d / 2 - oy) / hy);
         else if (hy < -1e-4) t2 = Math.min(t2, (nd.y - nd.d / 2 - oy) / hy);
-        t2 = Math.max(1.4, t2 - 0.4);
+        const roomWall = t2 < 16;
+        t2 = Math.max(0.1, t2 - 0.1);
         const [owx, owz] = this.world.simToWorld(ox, oy, deck);
+        const rayLength = this.world.lightRayDistance(
+          owx,
+          elev + muzzleY,
+          owz,
+          hx * Math.cos(tilt),
+          Math.sin(tilt),
+          hy * Math.cos(tilt),
+          16
+        );
+        const blocked = roomWall || rayLength < 15.999;
+        if (rayLength < t2) t2 = Math.max(0.1, rayLength - 0.12);
         const [hwx, hwz] = this.world.simToWorld(ox + hx * t2, oy + hy * t2, deck);
         const r2 = this.rifleLights[this.rifleLightN] ?? (this.rifleLights[this.rifleLightN] = {});
         const rise = Math.max(-muzzleY, Math.min(muzzleY + 1.5, Math.tan(tilt) * t2));
@@ -83720,6 +83804,7 @@ var init_agents3d = __esm({
         r2.ty = elev + muzzleY + rise;
         r2.tz = hwz;
         r2.throw = t2;
+        r2.blocked = blocked;
         r2.d2 = d2;
         this.rifleLightN++;
       }
@@ -84092,8 +84177,8 @@ var init_agents3d = __esm({
               if (this._needsLamp(buf.nodeId[i2])) {
                 const mz = this._aimOf(carry.rifle, curBob, lean);
                 if (sim2.fogAt(buf.nodeId[i2])) {
-                  this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev);
-                  this.beams.setMatrixAt(counts.beam++, this._m);
+                  if (this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev))
+                    this.beams.setMatrixAt(counts.beam++, this._m);
                 }
                 this._addRifleLight(
                   buf.nodeId[i2],
@@ -84143,8 +84228,8 @@ var init_agents3d = __esm({
               if (this._needsLamp(buf.nodeId[i2])) {
                 const mz = this._aimOf(carry.rifle, curBob, lean);
                 if (sim2.fogAt(buf.nodeId[i2])) {
-                  this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev);
-                  this.beams.setMatrixAt(counts.beam++, this._m);
+                  if (this._beamAt(bx, gy + mz.y, bz, heading, mz.yaw, mz.elev))
+                    this.beams.setMatrixAt(counts.beam++, this._m);
                 }
                 this._addRifleLight(
                   buf.nodeId[i2],
@@ -84531,13 +84616,18 @@ var init_agents3d = __esm({
       _beamAt(x2, y2, z2, rotY, yaw = RIFLE_YAW, elev = 0) {
         rotY += yaw;
         const fx = Math.cos(rotY) * Math.cos(elev), fz = -Math.sin(rotY) * Math.cos(elev);
+        const ox = x2 + fx * 0.35, oy = y2 + Math.sin(elev) * 0.35, oz = z2 + fz * 0.35;
+        const hit = this.world.lightRayDistance(ox, oy, oz, fx, Math.sin(elev), fz, 6);
+        const length3 = hit < 6 ? Math.max(0, hit - 0.18) : 6;
+        if (length3 < 0.25) return false;
         this._e.set(0, rotY, elev);
         this._q.setFromEuler(this._e);
         this._m.compose(
-          this._p.set(x2 + fx * 0.35, y2 + Math.sin(elev) * 0.35, z2 + fz * 0.35),
+          this._p.set(ox, oy, oz),
           this._q,
-          this._s.set(1, 1, 1)
+          this._s.set(length3 / 6, length3 / 6, length3 / 6)
         );
+        return true;
       }
       _rifleAt(x2, y2, z2, rotY) {
         const fx = Math.cos(rotY), fz = -Math.sin(rotY);
@@ -94802,12 +94892,13 @@ function updateRoomLightPool(inDark, pnode, pDeck, pX, pZ) {
     T3.position.set(r2.ox, r2.oy, r2.oz);
     T3.target.position.set(r2.tx, r2.ty, r2.tz);
     T3.target.updateMatrixWorld();
-    T3.distance = r2.throw * 1.6 + 8;
+    T3.distance = r2.blocked ? r2.throw + 0.35 : r2.throw * 1.6 + 8;
     T3.intensity = TEAM_TORCH_CD;
   }
   const rlCap = RUNGS[rung].rifleLights ?? 4;
   for (let i2 = spots; i2 < Math.min(lit.length, spots + rlCap); i2++) {
     const r2 = lit[i2];
+    if (r2.blocked) continue;
     const bx = r2.tx - r2.ox, bz = r2.tz - r2.oz;
     const bl = Math.hypot(bx, bz) || 1;
     lightPool.add(
