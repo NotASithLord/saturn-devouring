@@ -625,8 +625,9 @@ export class World {
     // The deck image is a 3:1 plate. Mapping it to a 4x4 square made its
     // distinctive rim and grime recur in a tight checkerboard. Keep its
     // proportions and anchor the pattern in ship space: slabs split around
-    // hatches then meet without restarting the plate at every cut.
-    const scaleFloorUV = (geo, w, d, cx = 0, cz = 0, plateW = 12, plateD = 4) => {
+    // hatches then meet without restarting the plate at every cut. A wider
+    // 18x6 m footprint keeps the distinct rim from repeating down corridors.
+    const scaleFloorUV = (geo, w, d, cx = 0, cz = 0, plateW = 18, plateD = 6) => {
       const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
       for (let i = 0; i < uv.count; i++) {
         if (Math.abs(n.getY(i)) > 0.5) {
@@ -739,7 +740,7 @@ export class World {
       const fh = floorHoles.get(n.idx) ?? [];
       if (!isStair) for (const [a0, b0, a1, b1] of rectMinusHoles(wx - n.w / 2, wz - n.d / 2, wx + n.w / 2, wz + n.d / 2, fh)) {
         const largeDeck = roomH > CLEAR_H + 0.5;
-        const slab = new THREE.Mesh(scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2, largeDeck ? 18 : 12, largeDeck ? 6 : 4), fmat);
+        const slab = new THREE.Mesh(scaleFloorUV(new THREE.BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2, largeDeck ? 24 : 18, largeDeck ? 8 : 6), fmat);
         slab.position.set((a0 + a1) / 2, elev - 0.06, (b0 + b1) / 2);
         this.scene.add(slab);
       }
@@ -1315,7 +1316,7 @@ export class World {
         const zc = frontToBack ? (wellCz - wellHz) + (i + 0.5) * dz : (wellCz + wellHz - landD) - (i + 0.5) * dz;
         const yc = yStart - (i + 0.5) * dy;
         const tread = new THREE.Mesh(
-          this._scaleFloorUV(new THREE.BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03, (xLo + xHi) / 2, zc), matStep);
+          this._scaleFloorUV(new THREE.BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03, (xLo + xHi) / 2, zc, 12, 4), matStep);
         tread.position.set((xLo + xHi) / 2, yc, zc);
         this.scene.add(tread);
       }
@@ -1325,7 +1326,7 @@ export class World {
     // mid landing (at the back, both halves) — the full landD band, so the
     // 180° turn happens on real flat floor, matching switchbackElev
     const land = new THREE.Mesh(
-      this._scaleFloorUV(new THREE.BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD, wellCx, wellCz + wellHz - landD / 2), matStep);
+      this._scaleFloorUV(new THREE.BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD, wellCx, wellCz + wellHz - landD / 2, 12, 4), matStep);
     land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - landD / 2);
     this.scene.add(land);
     // switchback spine wall between the two flights, with a bright cap rail —

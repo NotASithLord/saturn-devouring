@@ -80294,7 +80294,7 @@ var init_world = __esm({
           }
           return m2;
         };
-        const scaleFloorUV = (geo, w4, d2, cx = 0, cz = 0, plateW = 12, plateD = 4) => {
+        const scaleFloorUV = (geo, w4, d2, cx = 0, cz = 0, plateW = 18, plateD = 6) => {
           const p2 = geo.attributes.position, n2 = geo.attributes.normal, uv3 = geo.attributes.uv;
           for (let i2 = 0; i2 < uv3.count; i2++) {
             if (Math.abs(n2.getY(i2)) > 0.5) {
@@ -80398,7 +80398,7 @@ var init_world = __esm({
           const fh = floorHoles.get(n2.idx) ?? [];
           if (!isStair) for (const [a0, b0, a1, b1] of rectMinusHoles(wx - n2.w / 2, wz - n2.d / 2, wx + n2.w / 2, wz + n2.d / 2, fh)) {
             const largeDeck = roomH > CLEAR_H + 0.5;
-            const slab = new Mesh(scaleFloorUV(new BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2, largeDeck ? 18 : 12, largeDeck ? 6 : 4), fmat);
+            const slab = new Mesh(scaleFloorUV(new BoxGeometry(a1 - a0, 0.12, b1 - b0), a1 - a0, b1 - b0, (a0 + a1) / 2, (b0 + b1) / 2, largeDeck ? 24 : 18, largeDeck ? 8 : 6), fmat);
             slab.position.set((a0 + a1) / 2, elev - 0.06, (b0 + b1) / 2);
             this.scene.add(slab);
           }
@@ -80921,7 +80921,7 @@ var init_world = __esm({
             const zc = frontToBack ? wellCz - wellHz + (i2 + 0.5) * dz : wellCz + wellHz - landD - (i2 + 0.5) * dz;
             const yc = yStart - (i2 + 0.5) * dy;
             const tread = new Mesh(
-              this._scaleFloorUV(new BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03, (xLo + xHi) / 2, zc),
+              this._scaleFloorUV(new BoxGeometry(xHi - xLo, 0.13, dz + 0.03), xHi - xLo, dz + 0.03, (xLo + xHi) / 2, zc, 12, 4),
               matStep
             );
             tread.position.set((xLo + xHi) / 2, yc, zc);
@@ -80931,7 +80931,7 @@ var init_world = __esm({
         mkFlight(wellCx - wellHx, wellCx, hiElev, midElev, true);
         mkFlight(wellCx, wellCx + wellHx, midElev, loElev, false);
         const land = new Mesh(
-          this._scaleFloorUV(new BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD, wellCx, wellCz + wellHz - landD / 2),
+          this._scaleFloorUV(new BoxGeometry(2 * wellHx, 0.14, landD), 2 * wellHx, landD, wellCx, wellCz + wellHz - landD / 2, 12, 4),
           matStep
         );
         land.position.set(wellCx, midElev - 0.07, wellCz + wellHz - landD / 2);
