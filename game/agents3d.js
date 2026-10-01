@@ -17,6 +17,24 @@ import { TASK } from '../sim/hive.js';
 import { combatAttackArmPose, combatChargeArmPose } from '../sim/charge-pose.js';
 
 const CAP = 512;
+// Ragdolls and settled bodies can land metres from their simulation anchor.
+// Cull the place we actually draw, or crossing the invisible anchor makes a
+// corpse pop out in front of the player and reappear when they back away.
+export function agentCullPosition(simX, simZ, rag, rest, isBody) {
+  const visual = rag?.rootPos ?? (isBody ? rest : null);
+  return visual ? [visual[0], visual[2]] : [simX, simZ];
+}
+
+export function agentInView(x, z, viewX, viewZ, forwardX, forwardZ, maxDistanceSquared, nearDistanceSquared = 9) {
+  const dx = x - viewX, dz = z - viewZ;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > maxDistanceSquared) return false;
+  // Leave a generous near bubble for the full sprawl of a body, whose limbs
+  // can still be on screen after its root crosses behind the eye.
+  if (forwardX !== undefined && d2 > nearDistanceSquared &&
+      (dx * forwardX + dz * forwardZ) / Math.sqrt(d2) < -0.35) return false;
+  return true;
+}
 // the carry yaw _rifleAt applies; the weapon light rides the same axis
 const RIFLE_YAW = 0.40;
 
@@ -1273,22 +1291,21 @@ export class Agents3D {
       // is pixel-for-pixel invisible; skip its pose math and stamping
       if (this.viewX !== undefined) {
         const [ax, az] = world.simToWorld(rp.x, rp.y, deck);
-        const vdx = ax - this.viewX, vdz = az - this.viewZ;
+        const isBody = f === FACTION.CORPSE || (flags & (FLAG.DOWNED | FLAG.THRASHING)) !== 0;
+        const [cx, cz] = agentCullPosition(ax, az, this.ragdolls?.get(id),
+          this._ragRest.get(id), isBody);
+        const vdx = cx - this.viewX, vdz = cz - this.viewZ;
         this._curD2 = vdx * vdx + vdz * vdz;
         // CULL AT THE FOG WALL, NOT A FIXED 62 m (perf pass 5). scene.fog.far
         // collapses to ~34 m in flood dark and ~11 m in spore fog, and those
         // are exactly the moments the frame is already drowning — so the old
         // constant posed and stamped its largest crowd at the worst possible
         // time. Nothing past the fog can be seen by definition.
-        if (this._curD2 > this._cullD2) continue;
-        // ...and nothing BEHIND you can be seen either. The instanced sets are
-        // frustumCulled=false, so every stamped body is submitted whatever the
-        // camera is doing; a generous half-space test (cos ~ -0.35, well wider
-        // than the 72 deg fov) drops ~40% of them with no popping at the edge.
-        if (this._viewFX !== undefined && this._curD2 > 9) {
-          const inv = 1 / Math.sqrt(this._curD2);
-          if ((vdx * inv) * this._viewFX + (vdz * inv) * this._viewFZ < -0.35) continue;
-        }
+        // The instanced sets are frustumCulled=false. Keep the generous rear
+        // half-space test, but allow an 8 m bubble around sprawled bodies so
+        // a limb does not vanish as its root crosses behind the camera.
+        if (!agentInView(cx, cz, this.viewX, this.viewZ, this._viewFX,
+          this._viewFZ, this._cullD2, isBody ? 64 : 9)) continue;
       }
       let [wx, wz] = world.simToWorld(rp.x, rp.y, deck);
       // a body whose sim transit crosses the enclosed stair housing at

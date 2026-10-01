@@ -82887,6 +82887,17 @@ var init_ragdoll_clearance = __esm({
 });
 
 // game/agents3d.js
+function agentCullPosition(simX, simZ, rag, rest, isBody) {
+  const visual = rag?.rootPos ?? (isBody ? rest : null);
+  return visual ? [visual[0], visual[2]] : [simX, simZ];
+}
+function agentInView(x2, z2, viewX, viewZ, forwardX, forwardZ, maxDistanceSquared, nearDistanceSquared = 9) {
+  const dx = x2 - viewX, dz = z2 - viewZ;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > maxDistanceSquared) return false;
+  if (forwardX !== void 0 && d2 > nearDistanceSquared && (dx * forwardX + dz * forwardZ) / Math.sqrt(d2) < -0.35) return false;
+  return true;
+}
 function shotJitter(id, tick, salt) {
   let h2 = id * 374761393 + tick * 668265263 + salt * 2246822519 | 0;
   h2 = Math.imul(h2 ^ h2 >>> 13, 1274126177);
@@ -83898,13 +83909,26 @@ var init_agents3d = __esm({
           if (Math.abs(deck - playerDeck) > 1) continue;
           if (this.viewX !== void 0) {
             const [ax, az] = world2.simToWorld(rp.x, rp.y, deck);
-            const vdx = ax - this.viewX, vdz = az - this.viewZ;
+            const isBody = f2 === FACTION.CORPSE || (flags & (FLAG.DOWNED | FLAG.THRASHING)) !== 0;
+            const [cx, cz] = agentCullPosition(
+              ax,
+              az,
+              this.ragdolls?.get(id),
+              this._ragRest.get(id),
+              isBody
+            );
+            const vdx = cx - this.viewX, vdz = cz - this.viewZ;
             this._curD2 = vdx * vdx + vdz * vdz;
-            if (this._curD2 > this._cullD2) continue;
-            if (this._viewFX !== void 0 && this._curD2 > 9) {
-              const inv = 1 / Math.sqrt(this._curD2);
-              if (vdx * inv * this._viewFX + vdz * inv * this._viewFZ < -0.35) continue;
-            }
+            if (!agentInView(
+              cx,
+              cz,
+              this.viewX,
+              this.viewZ,
+              this._viewFX,
+              this._viewFZ,
+              this._cullD2,
+              isBody ? 64 : 9
+            )) continue;
           }
           let [wx, wz] = world2.simToWorld(rp.x, rp.y, deck);
           [wx, wz] = world2.clampStairTower(deck, wx, wz);
