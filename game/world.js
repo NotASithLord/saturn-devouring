@@ -675,12 +675,12 @@ export class World {
     this._scaleFloorUV = scaleFloorUV;
     const scaleWallUV = (geo, horiz, center, centerY, deckY, phase, roomH) => {
       const p = geo.attributes.position, n = geo.attributes.normal, uv = geo.attributes.uv;
-      // A tall hold used to repeat the entire three-metre wall graphic almost
-      // three times vertically. Let one panel span its full height, and widen
-      // it in proportion so the same rust/stripe pattern recurs less often.
+      // Enlarge the wall graphic in both directions so seams and warning
+      // stripes do not recur so often. Keep the same ship-space origin across
+      // door/window cuts; tall holds scale from their actual wall height.
       const tall = roomH > CLEAR_H + 0.5;
-      const spanU = tall ? roomH : 4;
-      const spanV = tall ? roomH : 3;
+      const spanU = (tall ? roomH : 4) * 1.5;
+      const spanV = (tall ? roomH : 3) * 1.5;
       for (let i = 0; i < uv.count; i++) {
         const along = horiz ? p.getX(i) : p.getZ(i);
         uv.setXY(i, (along + center) / spanU + phase, (p.getY(i) + centerY - deckY) / spanV);

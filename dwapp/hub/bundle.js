@@ -80461,8 +80461,8 @@ var init_world = __esm({
         const scaleWallUV = (geo, horiz, center, centerY, deckY, phase, roomH) => {
           const p2 = geo.attributes.position, n2 = geo.attributes.normal, uv3 = geo.attributes.uv;
           const tall = roomH > CLEAR_H + 0.5;
-          const spanU = tall ? roomH : 4;
-          const spanV = tall ? roomH : 3;
+          const spanU = (tall ? roomH : 4) * 1.5;
+          const spanV = (tall ? roomH : 3) * 1.5;
           for (let i2 = 0; i2 < uv3.count; i2++) {
             const along = horiz ? p2.getX(i2) : p2.getZ(i2);
             uv3.setXY(i2, (along + center) / spanU + phase, (p2.getY(i2) + centerY - deckY) / spanV);
