@@ -352,7 +352,8 @@ export class Agents3D {
     // flood combat forms, H2 crew/infection form —
     // drawn as one InstancedMesh per texture group, feet at y=0. The
     // carrier keeps its procedural swelling body (no source mesh exists);
-    // corpses are the character meshes laid flat (burned husks stay slabs).
+    // corpses are the character meshes laid flat. Incinerated bodies leave
+    // no visible geometry rather than the old placeholder slab.
     const mkSet = (name, cap = CAP) => {
       const parts = characterParts(name);
       const flood = name === 'infection' || name === 'combat_civ' || name === 'combat_odst';
@@ -439,7 +440,6 @@ export class Agents3D {
     this._carrierAnims = new Map();   // agent id -> CarrierAnimator
     this._carrierLast = new Map();    // agent id -> last drawn [x, y, z, heading, load]
     this._bursting = [];              // carriers mid-detonation, render-only
-    this.corpse = makeInstanced(scene, new THREE.BoxGeometry(1.5, 0.28, 0.55), 0x5a5a5a);
     // real MA5 silhouette (first-strike asset), merged grip+gun, one draw
     // call for every carried rifle on the ship (marines, armed crew, armed
     // combat forms) — see game/rifle-model.js
@@ -536,21 +536,20 @@ export class Agents3D {
 
     // CLASSIC-HALO RAGDOLLS (cosmetic; physics/ragdoll.js). A dead body is
     // handed to physics: it goes limp, is thrown off the killing blow, tumbles,
-    // and settles. When disabled — or a body is a burned husk, or the cap is
-    // full — everything falls back to the legacy flat-corpse / rotate-flat
-    // paths below, unchanged. Pure render-side: the sim never sees any of it.
+    // and settles. Disabled/cap-full ragdolls use the flat-body fallback;
+    // incinerated corpses have no visible replacement. Pure render-side.
     const rp = sim.P?.ragdoll;
     this.ragdolls = (rp?.enabled ?? false) ? new RagdollSystem(rp) : null;
     this._ragSeen = new Set(); // ids already handed to a ragdoll (never respawn one)
     this._ragRest = new Map(); // id -> [x,y,z] where its ragdoll last rested, so a
-                               // handoff to the legacy render (burn, cap-evict, revive)
+                               // handoff to the legacy render (cap-evict, revive)
                                // anchors there instead of teleporting to the sim node
     this._ragPrimed = false;   // first frame: mark the pre-placed dead so they never flop
     this._blasts = [];         // recent explosions (grenades): {deck, cx, cz, r, ttl} —
                                // deaths inside one get a big radial flailing launch, and a
                                // blast re-flings bodies already on the deck
     this._seen = new Set();
-    this._counts = { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, corpse: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
+    this._counts = { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
   }
 
   // The game calls this when a grenade detonates (game/main.js stepFrags). It
@@ -1169,7 +1168,7 @@ export class Agents3D {
     if (this._blasts.length) this._blasts = this._blasts.filter((b) => (b.ttl -= dt) > 0);
     const k = Math.min(1, dt * 14);
     // pooled and zeroed rather than rebuilt: this runs every frame
-    const counts = (this._counts ??= { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, corpse: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 });
+    const counts = (this._counts ??= { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 });
     for (const key in counts) counts[key] = 0;
     this._muzzleById.clear();
     let clip = 0, animT = 0, curId = 0, curPanic = false, curBob = 0, curAim = 0;
@@ -1335,43 +1334,29 @@ export class Agents3D {
         // a fresh kill flops via physics (_ragdollBody handles the burned/capped
         // cases internally and returns false to hand back here).
         if (this._ragdollBody(id, f, flags, rp, wx, wz, deck, heading, counts)) continue;
+        // A destroyed body remains in the simulation as a spent marker, but
+        // there is no body mesh to draw. The old box was the stray rectangle.
+        if (flags & FLAG.BURNED) continue;
         // Legacy static render. Anchor at the ragdoll's settled spot if it
-        // flopped (burned/cap-evicted after settling), so it doesn't snap back
+        // flopped (cap-evicted after settling), so it doesn't snap back
         // to the sim node; otherwise the sim position (ragdoll off, or a
         // dragged/relocated body the drift-guard handed back to follow the sim).
         const rest = this._ragRest.get(id);
         const bx = rest ? rest[0] : wx, bz = rest ? rest[2] : wz;
         const bElev = rest ? world.groundHeightAt(deck, bx, bz) : elev;
         const lieAng = (id * 2.399963) % (Math.PI * 2);
-        if (flags & FLAG.BURNED) {
-          // charred husk — a blackened low mass, no body left to speak of
-          this._e.set(0, lieAng, 0);
-          this._q.setFromEuler(this._e);
-          this._m.compose(this._p.set(bx, bElev + 0.1, bz), this._q, this._s.set(1, 0.55, 1));
-          this.corpse.setMatrixAt(counts.corpse++, this._m);
+        // A real body lies face-up with a per-body limb sprawl on the plating.
+        // Armed dead keep their rifle beside them for the scavenge prompt.
+        this._e.set(0, lieAng, Math.PI / 2);
+        this._q.setFromEuler(this._e);
+        this._m.compose(this._p.set(bx, bElev + 0.16, bz), this._q, this._s.set(1, 1, 1));
+        if (flags & FLAG.ARMED_HOST) {
+          this._stampSprawl(this.armedSet, counts.armed++, id);
+          this._rifleAt(bx + Math.cos(lieAng + 1.2) * 0.55, bElev + 0.12,
+            bz + Math.sin(lieAng + 1.2) * 0.55, lieAng * 1.7);
+          this.rifle.setMatrixAt(counts.rifle++, this._m);
         } else {
-          // a REAL body lying where it fell (user note: render bodies
-          // appropriately, not grey boxes) — laid flat WITH a per-body limb
-          // sprawl (user: the bind-pose T read as a cardboard cutout), resting
-          // ON the plating instead of sunk into it. The armed dead keep
-          // their rifle beside them, so the scavenge prompt points at
-          // something you can see.
-          // ON ITS BACK, not its side. Rx(-90) put the model's LATERAL axis
-          // vertical, so a bind-pose T threw one arm at the ceiling and drove
-          // the other through the deck. Rz(+90) stands the chest up instead:
-          // the body lies face-up, both arms rest in the floor plane, and the
-          // sprawl above can tuck them.
-          this._e.set(0, lieAng, Math.PI / 2);
-          this._q.setFromEuler(this._e);
-          this._m.compose(this._p.set(bx, bElev + 0.16, bz), this._q, this._s.set(1, 1, 1));
-          if (flags & FLAG.ARMED_HOST) {
-            this._stampSprawl(this.armedSet, counts.armed++, id);
-            this._rifleAt(bx + Math.cos(lieAng + 1.2) * 0.55, bElev + 0.12,
-              bz + Math.sin(lieAng + 1.2) * 0.55, lieAng * 1.7);
-            this.rifle.setMatrixAt(counts.rifle++, this._m);
-          } else {
-            this._stampSprawl(this.civSet, counts.civ++, id);
-          }
+          this._stampSprawl(this.civSet, counts.civ++, id);
         }
         continue;
       }
@@ -1919,7 +1904,7 @@ export class Agents3D {
     this.flamer.castShadow = this.rifle.castShadow;
     this.carrier.castShadow = !cull || this._castNear.has(this.carrier);
     for (const [mesh, c] of [[this.carrier, counts.carrier],
-    [this.corpse, counts.corpse], [this.rifle, counts.rifle], [this.flamer, counts.flamer],
+    [this.rifle, counts.rifle], [this.flamer, counts.flamer],
     [this.flash, counts.flash], [this.beams, counts.beam]]) {
       commitInstanced(mesh, c);
     }
@@ -2021,10 +2006,9 @@ export class Agents3D {
   // physics ragdoll. Returns true if it drew it (the caller then `continue`s),
   // false to hand back to the legacy static/rotate-flat render. It returns
   // false (handing off) when: ragdolls are disabled; the body is an
-  // already-incinerated husk (no flop to start); the sim has relocated the body
-  // (drift → follow the sim); or the body just burned/was cap-evicted after
-  // flopping — in which case _ragRest carries the settled spot so the legacy
-  // render anchors there instead of teleporting to the sim node.
+  // already-incinerated body (no flop to start); the sim has relocated the
+  // body (drift → follow the sim); or a body burned/was cap-evicted after
+  // flopping. Cap-evicted bodies retain their settled anchor.
   // per-slot diffuse tint for the folded ODST look. Keyed on SLOT, not agent
   // id — the slot->agent mapping reshuffles every frame, and this repaints
   // exactly the slots whose faction bit moved. Slots past `count` keep stale
@@ -2054,9 +2038,8 @@ export class Agents3D {
         sys.remove(id); this._ragRest.delete(id);
         return false;
       }
-      // incinerated after flopping: hand to the legacy husk/slab, anchored at
-      // the settled pose (recorded just below), and free the ragdoll slot.
-      if (burned) { this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]]); sys.remove(id); return false; }
+      // Incineration frees the ragdoll without leaving a placeholder slab.
+      if (burned) { this._ragRest.delete(id); sys.remove(id); return false; }
     } else {
       if (burned) return false;                // never START a flop for an already-incinerated body
       // a body only flops once — UNLESS a grenade goes off on it (the classic

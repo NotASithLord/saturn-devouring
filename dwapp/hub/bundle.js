@@ -83320,7 +83320,6 @@ var init_agents3d = __esm({
         this._carrierAnims = /* @__PURE__ */ new Map();
         this._carrierLast = /* @__PURE__ */ new Map();
         this._bursting = [];
-        this.corpse = makeInstanced(scene2, new BoxGeometry(1.5, 0.28, 0.55), 5921370);
         this.rifle = makeInstanced(scene2, carryGeometry(), MA5_GUNMETAL);
         this.rifle.material.roughness = 0.78;
         this.rifle.material.metalness = 0.25;
@@ -83391,7 +83390,7 @@ var init_agents3d = __esm({
         this._ragPrimed = false;
         this._blasts = [];
         this._seen = /* @__PURE__ */ new Set();
-        this._counts = { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, corpse: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
+        this._counts = { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
       }
       // The game calls this when a grenade detonates (game/main.js stepFrags). It
       // records the blast so deaths it causes launch dramatically, and immediately
@@ -83954,7 +83953,7 @@ var init_agents3d = __esm({
         this._cullD2 = cullR * cullR;
         if (this._blasts.length) this._blasts = this._blasts.filter((b2) => (b2.ttl -= dt) > 0);
         const k2 = Math.min(1, dt * 14);
-        const counts = this._counts ??= { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, corpse: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
+        const counts = this._counts ??= { civ: 0, armed: 0, marine: 0, infection: 0, combatCiv: 0, combatOdst: 0, carrier: 0, rifle: 0, flamer: 0, flash: 0, beam: 0 };
         for (const key in counts) counts[key] = 0;
         this._muzzleById.clear();
         let clip = 0, animT = 0, curId = 0, curPanic = false, curBob = 0, curAim = 0;
@@ -84105,31 +84104,25 @@ var init_agents3d = __esm({
           const heading = -buf.headingR[i2];
           if (f2 === FACTION.CORPSE) {
             if (this._ragdollBody(id, f2, flags, rp, wx, wz, deck, heading, counts)) continue;
+            if (flags & FLAG.BURNED) continue;
             const rest = this._ragRest.get(id);
             const bx = rest ? rest[0] : wx, bz = rest ? rest[2] : wz;
             const bElev = rest ? world2.groundHeightAt(deck, bx, bz) : elev;
             const lieAng = id * 2.399963 % (Math.PI * 2);
-            if (flags & FLAG.BURNED) {
-              this._e.set(0, lieAng, 0);
-              this._q.setFromEuler(this._e);
-              this._m.compose(this._p.set(bx, bElev + 0.1, bz), this._q, this._s.set(1, 0.55, 1));
-              this.corpse.setMatrixAt(counts.corpse++, this._m);
+            this._e.set(0, lieAng, Math.PI / 2);
+            this._q.setFromEuler(this._e);
+            this._m.compose(this._p.set(bx, bElev + 0.16, bz), this._q, this._s.set(1, 1, 1));
+            if (flags & FLAG.ARMED_HOST) {
+              this._stampSprawl(this.armedSet, counts.armed++, id);
+              this._rifleAt(
+                bx + Math.cos(lieAng + 1.2) * 0.55,
+                bElev + 0.12,
+                bz + Math.sin(lieAng + 1.2) * 0.55,
+                lieAng * 1.7
+              );
+              this.rifle.setMatrixAt(counts.rifle++, this._m);
             } else {
-              this._e.set(0, lieAng, Math.PI / 2);
-              this._q.setFromEuler(this._e);
-              this._m.compose(this._p.set(bx, bElev + 0.16, bz), this._q, this._s.set(1, 1, 1));
-              if (flags & FLAG.ARMED_HOST) {
-                this._stampSprawl(this.armedSet, counts.armed++, id);
-                this._rifleAt(
-                  bx + Math.cos(lieAng + 1.2) * 0.55,
-                  bElev + 0.12,
-                  bz + Math.sin(lieAng + 1.2) * 0.55,
-                  lieAng * 1.7
-                );
-                this.rifle.setMatrixAt(counts.rifle++, this._m);
-              } else {
-                this._stampSprawl(this.civSet, counts.civ++, id);
-              }
+              this._stampSprawl(this.civSet, counts.civ++, id);
             }
             continue;
           }
@@ -84619,7 +84612,6 @@ var init_agents3d = __esm({
         this.carrier.castShadow = !cull || this._castNear.has(this.carrier);
         for (const [mesh, c2] of [
           [this.carrier, counts.carrier],
-          [this.corpse, counts.corpse],
           [this.rifle, counts.rifle],
           [this.flamer, counts.flamer],
           [this.flash, counts.flash],
@@ -84725,10 +84717,9 @@ var init_agents3d = __esm({
       // physics ragdoll. Returns true if it drew it (the caller then `continue`s),
       // false to hand back to the legacy static/rotate-flat render. It returns
       // false (handing off) when: ragdolls are disabled; the body is an
-      // already-incinerated husk (no flop to start); the sim has relocated the body
-      // (drift → follow the sim); or the body just burned/was cap-evicted after
-      // flopping — in which case _ragRest carries the settled spot so the legacy
-      // render anchors there instead of teleporting to the sim node.
+      // already-incinerated body (no flop to start); the sim has relocated the
+      // body (drift → follow the sim); or a body burned/was cap-evicted after
+      // flopping. Cap-evicted bodies retain their settled anchor.
       // per-slot diffuse tint for the folded ODST look. Keyed on SLOT, not agent
       // id — the slot->agent mapping reshuffles every frame, and this repaints
       // exactly the slots whose faction bit moved. Slots past `count` keep stale
@@ -84753,7 +84744,7 @@ var init_agents3d = __esm({
             return false;
           }
           if (burned) {
-            this._ragRest.set(id, [rag.rootPos[0], rag.rootPos[1], rag.rootPos[2]]);
+            this._ragRest.delete(id);
             sys.remove(id);
             return false;
           }
