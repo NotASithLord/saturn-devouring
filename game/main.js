@@ -9,6 +9,7 @@ import { createShadowBudget } from '../engine/shadow-budget.js';
 import * as THREE from '../engine/vendor/three.webgpu.module.js';
 import { Sim, fmtTime } from '../sim/sim.js';
 import { FACTION, FLAG } from '../shared/agentBuffer.js';
+import { shipForceCounts } from '../shared/force-counts.js';
 import { combatMeleeImpulse, hurtFloodForm } from '../sim/combat.js';
 import { World, elevOf, DOOR_W } from './world.js';
 import { Agents3D } from './agents3d.js';
@@ -1439,16 +1440,9 @@ const strengthMeter = strengthHud.querySelector('.strength-track');
 function updateStrengthHud(now) {
   if (now - _strengthHudAt < 250) return;
   _strengthHudAt = now;
-  let floodAlive = 0, marinesAlive = 0;
   // Read the live entities rather than hive.stats: non-authority co-op peers
   // receive these poses but do not run the hive's strategic tick locally.
-  for (const a of sim.agents) {
-    if (a.dead || a.hp <= 0) continue;
-    if ((a.faction === FACTION.INFECTION || a.faction === FACTION.COMBAT)
-      && !a.downed) floodAlive++;
-    else if (a.faction === FACTION.CARRIER) floodAlive++;
-    else if (a.faction === FACTION.MARINE && !a.isPlayer && !a.fromPlayer) marinesAlive++;
-  }
+  const { floodAlive, marinesAlive } = shipForceCounts(sim.agents);
   // One Flood per marine is halfway; two Flood per marine fills the track.
   // Past that point the end of the bar fractures.
   const percent = marinesAlive ? 50 * floodAlive / marinesAlive

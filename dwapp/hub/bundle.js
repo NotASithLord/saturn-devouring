@@ -69512,7 +69512,7 @@ var init_params = __esm({
         // THE SEALED RESERVE (user rule): the armory starts LOCKED. Inside: the
         // racked rifles + grenade crates, one flamethrower, and an ODST squad
         // standing by with more armor than a line marine. Each seed assigns its
-        // own release time without consulting marine or Flood strength.
+        // own latest release time; active Flood-to-marine parity opens it sooner.
         odstSquadSize: 5,
         odstHp: 85,
         // vs line marine 45 — hardened ODST plate
@@ -69976,6 +69976,23 @@ var init_params = __esm({
         dtCap: 0.05
       }
     };
+  }
+});
+
+// shared/force-counts.js
+function shipForceCounts(agents2) {
+  let floodAlive = 0, marinesAlive = 0;
+  for (const a2 of agents2) {
+    if (a2.dead || a2.hp <= 0) continue;
+    if ((a2.faction === FACTION.INFECTION || a2.faction === FACTION.COMBAT) && !a2.downed) floodAlive++;
+    else if (a2.faction === FACTION.CARRIER) floodAlive++;
+    else if (a2.faction === FACTION.MARINE && !a2.isPlayer && !a2.fromPlayer) marinesAlive++;
+  }
+  return { floodAlive, marinesAlive };
+}
+var init_force_counts = __esm({
+  "shared/force-counts.js"() {
+    init_agentBuffer();
   }
 });
 
@@ -75866,6 +75883,7 @@ var init_sim = __esm({
     init_rng();
     init_params();
     init_agentBuffer();
+    init_force_counts();
     init_geometry();
     init_init();
     init_humans();
@@ -76953,6 +76971,7 @@ var init_sim = __esm({
         for (const entry of this.commands.collect(this.tickCount)) {
           applyCommand(this, entry);
         }
+        this._armoryWatch();
         const halfRound = this.tickCount % this.strategicEvery;
         if (halfRound === 0) {
           this._computeInfluence();
@@ -76960,7 +76979,6 @@ var init_sim = __esm({
           this.hive._combatResponseCache?.clear();
           this._commandTick();
           this._checkSelfArming();
-          this._armoryWatch();
           this._checkLastStand();
           this._lastStandStragglers();
           this.stats.conversionsRound = 0;
@@ -77125,12 +77143,15 @@ var init_sim = __esm({
       // Once panic breaks out shipwide (before any last stand), some unarmed
       // civilians make a run for the armory and arm themselves — first come,
       // first served on the remaining rifles (user note).
-      // THE SEAL RELEASES on this seed's fixed timer. Force composition never
-      // enters the gate: the mandatory Deck 1 sentries are a local garrison, not
-      // a reason to delay the reserve. Racks, grenades and the flamethrower behind
-      // the ODSTs enter play at the same moment.
+      // The seeded timer is the latest release. If active Flood reaches one form
+      // per living ship marine first, release immediately. The same gate opens
+      // the ODST reserve and its racks, grenades and flamethrower.
       _armoryWatch() {
-        if (!this.armoryLocked || this.t < this.armoryReleaseAt) return;
+        if (!this.armoryLocked) return;
+        if (this.t < this.armoryReleaseAt) {
+          const { floodAlive, marinesAlive } = shipForceCounts(this.agents);
+          if (floodAlive === 0 || floodAlive < marinesAlive) return;
+        }
         this.armoryLocked = false;
         const armoryIdx = this.graph.byId.get("armory");
         for (const e2 of this.graph.edges) {
@@ -95037,13 +95058,7 @@ function setStyle(id, prop, v2) {
 function updateStrengthHud(now) {
   if (now - _strengthHudAt < 250) return;
   _strengthHudAt = now;
-  let floodAlive = 0, marinesAlive = 0;
-  for (const a2 of sim.agents) {
-    if (a2.dead || a2.hp <= 0) continue;
-    if ((a2.faction === FACTION.INFECTION || a2.faction === FACTION.COMBAT) && !a2.downed) floodAlive++;
-    else if (a2.faction === FACTION.CARRIER) floodAlive++;
-    else if (a2.faction === FACTION.MARINE && !a2.isPlayer && !a2.fromPlayer) marinesAlive++;
-  }
+  const { floodAlive, marinesAlive } = shipForceCounts(sim.agents);
   const percent = marinesAlive ? 50 * floodAlive / marinesAlive : floodAlive ? Infinity : 0;
   const overmatched = percent > 100;
   setStyle(
@@ -96893,6 +96908,7 @@ var init_main = __esm({
     init_three_webgpu_module();
     init_sim();
     init_agentBuffer();
+    init_force_counts();
     init_combat();
     init_world();
     init_agents3d();

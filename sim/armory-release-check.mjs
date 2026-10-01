@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { FACTION } from '../shared/agentBuffer.js';
+import { shipForceCounts } from '../shared/force-counts.js';
 import { Sim } from './sim.js';
 
 const releases = [];
@@ -18,8 +19,8 @@ const replay = new Sim(seed);
 assert.equal(first.armoryReleaseAt, replay.armoryReleaseAt,
   'the same seed must reproduce the same release time');
 
-// Force makeup is deliberately irrelevant. Remove every Deck 1 marine and
-// the seal must still wait for the seed timer, then open exactly on it.
+// Deck 1 losses alone do not meet parity, so the seal still waits for its
+// seeded deadline and opens exactly on it.
 for (const agent of first.agents) {
   if (agent.faction === FACTION.MARINE && first.graph.node(agent.node).deck === 1) {
     agent.dead = true;
@@ -27,6 +28,7 @@ for (const agent of first.agents) {
   }
 }
 first.t = first.armoryReleaseAt - 0.001;
+assert.ok(shipForceCounts(first.agents).floodAlive < shipForceCounts(first.agents).marinesAlive);
 first._armoryWatch();
 assert.equal(first.armoryLocked, true, 'Deck 1 losses must not release the reserve early');
 
@@ -37,5 +39,51 @@ const armory = first.graph.byId.get('armory');
 assert.ok(first.graph.edges
   .filter((edge) => edge.a === armory || edge.b === armory)
   .every((edge) => !edge.locked), 'the timed release must open every armory seal');
+
+// The same active-body counts used by the HUD trigger the early release at
+// equality, not only when the Flood already outnumber the marines.
+const parity = new Sim('armory-release-parity');
+const initial = shipForceCounts(parity.agents);
+assert.ok(initial.floodAlive > 0 && initial.marinesAlive > initial.floodAlive + 1);
+const marines = parity.agents.filter((a) => a.faction === FACTION.MARINE);
+for (const marine of marines.slice(initial.floodAlive + 1)) {
+  marine.dead = true; marine.hp = 0;
+}
+parity.t = 60;
+assert.deepEqual(shipForceCounts(parity.agents), {
+  floodAlive: initial.floodAlive, marinesAlive: initial.floodAlive + 1,
+});
+parity._armoryWatch();
+assert.equal(parity.armoryLocked, true, 'one extra marine must keep the reserve sealed');
+marines[initial.floodAlive].dead = true; marines[initial.floodAlive].hp = 0;
+parity._armoryWatch();
+assert.equal(parity.armoryLocked, false, '1:1 parity must release before the seeded deadline');
+assert.ok(parity.graph.edges
+  .filter((edge) => edge.a === parity.graph.byId.get('armory') || edge.b === parity.graph.byId.get('armory'))
+  .every((edge) => !edge.locked), 'parity release must open the armory seal');
+const releaseLogs = parity.events.filter((event) => event.msg?.includes('ARMORY SEAL RELEASED'));
+assert.equal(releaseLogs.length, 1, 'parity release broadcasts once');
+parity._armoryWatch();
+assert.equal(parity.events.filter((event) => event.msg?.includes('ARMORY SEAL RELEASED')).length,
+  releaseLogs.length, 'release must not repeat');
+
+const tickParity = new Sim('armory-release-tick');
+const tickFlood = shipForceCounts(tickParity.agents).floodAlive;
+const tickMarines = tickParity.agents.filter((a) => a.faction === FACTION.MARINE);
+for (const marine of tickMarines.slice(tickFlood)) { marine.dead = true; marine.hp = 0; }
+assert.equal(shipForceCounts(tickParity.agents).marinesAlive, tickFlood);
+tickParity.tick();
+assert.equal(tickParity.armoryLocked, false,
+  'the regular simulation tick must notice parity before the next strategic round');
+
+assert.deepEqual(shipForceCounts([
+  { faction: FACTION.INFECTION, hp: 10 },
+  { faction: FACTION.COMBAT, hp: 10, downed: true },
+  { faction: FACTION.CARRIER, hp: 10 },
+  { faction: FACTION.MARINE, hp: 10, odst: true },
+  { faction: FACTION.MARINE, hp: 10, isPlayer: true },
+  { faction: FACTION.MARINE, hp: 10, fromPlayer: true },
+]), { floodAlive: 2, marinesAlive: 1 },
+'downed forms and players do not alter the ship-force threshold');
 
 console.log(`armory release check passed (${Math.min(...releases).toFixed(1)}s–${Math.max(...releases).toFixed(1)}s)`);

@@ -243,8 +243,8 @@ export function initRun(seed, rng, P, runOptions = {}) {
   // THE SEALED RESERVE (user rule): the armory's blastdoor is LOCKED from
   // tick zero. Racked rifles, grenade crates, one flamethrower — and an ODST
   // squad standing by inside, harder than any line marine. The seal releases
-  // only when the ship is genuinely losing (sim.js _armoryWatch): the hive
-  // fielding 20+ combat forms with 10 or fewer line marines still standing.
+  // at its seeded time or earlier when active Flood reaches 1:1 parity with
+  // the ship's living marine force (sim.js _armoryWatch).
   {
     const armoryIdx = graph.byId.get('armory');
     const door = graph.edges.find((e) => (e.a === armoryIdx || e.b === armoryIdx) && e.lockable);

@@ -235,7 +235,7 @@ export const PARAMS = {
     // THE SEALED RESERVE (user rule): the armory starts LOCKED. Inside: the
     // racked rifles + grenade crates, one flamethrower, and an ODST squad
     // standing by with more armor than a line marine. Each seed assigns its
-    // own release time without consulting marine or Flood strength.
+    // own latest release time; active Flood-to-marine parity opens it sooner.
     odstSquadSize: 5,
     odstHp: 85,                // vs line marine 45 — hardened ODST plate
     releaseMinSec: 6.5 * 60,

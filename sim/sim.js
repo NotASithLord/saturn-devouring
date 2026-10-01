@@ -5,6 +5,7 @@
 import { RNG } from '../shared/rng.js';
 import { cloneParams } from '../shared/params.js';
 import { AgentBuffer, FACTION, FLAG, CLIP } from '../shared/agentBuffer.js';
+import { shipForceCounts } from '../shared/force-counts.js';
 import { clearHeightOf, CLEAR_H, stairWellDims } from '../shared/geometry.js';
 import { initRun, STATE, makeAgent } from './init.js';
 import { updateHumansTick, strategicSquads, assignFirstSweep, marineThrowFragAt } from './humans.js';
@@ -84,9 +85,8 @@ export class Sim {
     this.armoryFlamer = true;
     this.armoryFuelCans = 3;
     this.armoryLocked = true; // the sealed reserve (init.js locked the blastdoor)
-    // A dedicated stream keeps the seeded release time reproducible without
-    // moving any gameplay RNG draws. It is deliberately independent of force
-    // strength: Deck 1 sentries and line losses cannot open the seal early.
+    // A dedicated stream keeps the scheduled release reproducible without
+    // moving gameplay RNG draws. Active Flood parity can release it sooner.
     this.armoryReleaseAt = new RNG(`${this.seed}:armory-release`).range(
       this.P.armory.releaseMinSec,
       this.P.armory.releaseMaxSec,
@@ -1225,6 +1225,11 @@ export class Sim {
       applyCommand(this, entry);
     }
 
+    // Check every simulation tick so a fresh 1:1 Flood advantage releases
+    // the reserve within 67 ms. Keep this before the strategic fall-back call
+    // so an ODST deployment can still precede the last-stand announcement.
+    this._armoryWatch();
+
     // strategic tick ("infection round", §2.3) — the HIVE's round and the
     // MARINES' round are STAGGERED half an interval apart (perf pass 5): both
     // measured multi-ms late-game, and sharing one 15 Hz tick made that tick
@@ -1242,11 +1247,6 @@ export class Sim {
       this.hive._combatResponseCache?.clear();
       this._commandTick();
       this._checkSelfArming();
-      // BEFORE the fall-back check (user: the seal should release "just before
-      // the all hands fall back is announced"). Measured with the old order —
-      // _checkLastStand first, _armoryWatch after — the release landed AFTER
-      // the fallback on 2 of 4 deciding seeds, by 71 s and 81 s.
-      this._armoryWatch();
       this._checkLastStand();
       this._lastStandStragglers();
       this.stats.conversionsRound = 0;
@@ -1415,12 +1415,15 @@ export class Sim {
   // Once panic breaks out shipwide (before any last stand), some unarmed
   // civilians make a run for the armory and arm themselves — first come,
   // first served on the remaining rifles (user note).
-  // THE SEAL RELEASES on this seed's fixed timer. Force composition never
-  // enters the gate: the mandatory Deck 1 sentries are a local garrison, not
-  // a reason to delay the reserve. Racks, grenades and the flamethrower behind
-  // the ODSTs enter play at the same moment.
+  // The seeded timer is the latest release. If active Flood reaches one form
+  // per living ship marine first, release immediately. The same gate opens
+  // the ODST reserve and its racks, grenades and flamethrower.
   _armoryWatch() {
-    if (!this.armoryLocked || this.t < this.armoryReleaseAt) return;
+    if (!this.armoryLocked) return;
+    if (this.t < this.armoryReleaseAt) {
+      const { floodAlive, marinesAlive } = shipForceCounts(this.agents);
+      if (floodAlive === 0 || floodAlive < marinesAlive) return;
+    }
     this.armoryLocked = false;
     const armoryIdx = this.graph.byId.get('armory');
     for (const e of this.graph.edges) {
